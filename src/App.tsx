@@ -17,6 +17,10 @@ import {
   googleSignIn,
   logout,
   setCachedAccessToken,
+  saveFormToFirestore,
+  fetchFormsFromFirestore,
+  fetchFormByIdFromFirestore,
+  deleteFormFromFirestore,
 } from './services/firebase';
 import {
   PresentationSlot,
@@ -108,32 +112,53 @@ export default function App() {
   });
   const [isExecutingMutation, setIsExecutingMutation] = useState(false);
 
-  // Load registered forms from server
+  // Load registered forms from Firestore (with fallback to backend/localStorage)
   const loadFormsFromServer = useCallback(async () => {
     try {
+      // 1. First attempt: Firestore
+      const firestoreForms = await fetchFormsFromFirestore();
+      if (firestoreForms && firestoreForms.length > 0) {
+        setForms(firestoreForms);
+        localStorage.setItem(STORAGE_KEY_FORMS, JSON.stringify(firestoreForms));
+        return firestoreForms;
+      }
+
+      // 2. Fallback attempt: Backend /api/forms
       const res = await fetch('/api/forms');
       if (res.ok) {
         const data = await res.json();
         if (data.forms && data.forms.length > 0) {
           setForms(data.forms);
           localStorage.setItem(STORAGE_KEY_FORMS, JSON.stringify(data.forms));
+          return data.forms;
         }
       }
     } catch (e) {
-      console.warn('Could not load forms from backend:', e);
+      console.warn('Could not load forms:', e);
     }
   }, []);
 
-  // Save or update a form to backend & localStorage
+  // Save or update a form to Firestore, backend & localStorage
   const handleSaveForm = async (newForm: CustomForm) => {
-    // 1. Post to backend
-    await fetch('/api/forms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newForm),
-    });
+    // 1. Save to Firestore
+    try {
+      await saveFormToFirestore(newForm, user?.uid);
+    } catch (e) {
+      console.warn('Firestore save warning:', e);
+    }
 
-    // 2. Update local state
+    // 2. Sync to backend
+    try {
+      await fetch('/api/forms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newForm),
+      });
+    } catch (e) {
+      console.warn('Backend sync warning:', e);
+    }
+
+    // 3. Update local state
     setForms((prev) => {
       const filtered = prev.filter((f) => f.id !== newForm.id);
       const updated = [newForm, ...filtered];
@@ -155,9 +180,14 @@ export default function App() {
     }
   };
 
-  // Delete a form
+  // Delete a form from Firestore, backend & localStorage
   const handleDeleteForm = async (formId: string) => {
-    await fetch(`/api/forms/${formId}`, { method: 'DELETE' });
+    try {
+      await deleteFormFromFirestore(formId);
+    } catch (e) {
+      console.warn('Firestore delete warning:', e);
+    }
+    await fetch(`/api/forms/${formId}`, { method: 'DELETE' }).catch(() => {});
     setForms((prev) => {
       const updated = prev.filter((f) => f.id !== formId);
       localStorage.setItem(STORAGE_KEY_FORMS, JSON.stringify(updated));
@@ -165,7 +195,7 @@ export default function App() {
     });
   };
 
-  // Sync owner token with backend
+  // Sync owner token with backend & ensure default form in Firestore
   const syncSessionWithBackend = useCallback(
     async (token: string, sheetConfig: SpreadsheetConfig) => {
       try {
@@ -182,24 +212,29 @@ export default function App() {
           }),
         });
 
-        // Ensure default form exists
+        // Ensure default form exists in Firestore & backend
+        const defaultForm: CustomForm = {
+          id: 'default',
+          title: sheetConfig.title || 'Jadwal Presentasi',
+          sheetId: sheetConfig.id,
+          sheetName: sheetConfig.activeSheetName || 'Sheet1',
+          startRow: sheetConfig.startRow || 54,
+          createdAt: Date.now(),
+        };
+
+        await saveFormToFirestore(defaultForm, user?.uid).catch(() => {});
         await fetch('/api/forms', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: 'default',
-            title: sheetConfig.title || 'Jadwal Presentasi',
-            sheetId: sheetConfig.id,
-            sheetName: sheetConfig.activeSheetName || 'Sheet1',
-            startRow: sheetConfig.startRow || 54,
-          }),
-        });
+          body: JSON.stringify(defaultForm),
+        }).catch(() => {});
+
         await loadFormsFromServer();
       } catch (e) {
         console.warn('Backend sync note:', e);
       }
     },
-    [loadFormsFromServer]
+    [loadFormsFromServer, user?.uid]
   );
 
   // Load public slots for student without login
@@ -208,16 +243,41 @@ export default function App() {
       setIsRefreshing(true);
       setSheetError(null);
 
+      // Attempt to load form details directly from Firestore
+      let activeForm: CustomForm | null = null;
+      if (formSlug) {
+        activeForm = await fetchFormByIdFromFirestore(formSlug);
+        if (activeForm) {
+          setActiveFormItem(activeForm);
+          setConfig((prev) => ({
+            id: activeForm!.sheetId || prev?.id || '',
+            url: prev?.url || `https://docs.google.com/spreadsheets/d/${activeForm!.sheetId}/edit`,
+            sheets: prev?.sheets || [activeForm!.sheetName],
+            title: activeForm!.title || 'Jadwal Presentasi',
+            activeSheetName: activeForm!.sheetName || 'Jadwal Presentasi',
+            startRow: activeForm!.startRow || 54,
+          }));
+        }
+      }
+
       const params = new URLSearchParams();
       if (formSlug) params.set('formId', formSlug);
-      if (targetSheetId) params.set('sheetId', targetSheetId);
-      if (targetTab) params.set('sheetName', targetTab);
+
+      const effectiveSheetId = activeForm?.sheetId || targetSheetId;
+      const effectiveSheetName = activeForm?.sheetName || targetTab;
+      const effectiveStartRow = activeForm?.startRow;
+      const effectiveTitle = activeForm?.title;
+
+      if (effectiveSheetId) params.set('sheetId', effectiveSheetId);
+      if (effectiveSheetName) params.set('sheetName', effectiveSheetName);
+      if (effectiveStartRow) params.set('startRow', effectiveStartRow.toString());
+      if (effectiveTitle) params.set('title', effectiveTitle);
 
       const res = await fetch(`/api/public/slots?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setSlots(data.slots || []);
-        if (data.form) {
+        if (data.form && !activeForm) {
           setActiveFormItem(data.form);
           setConfig((prev) => ({
             id: data.form.sheetId || prev?.id || '',
@@ -230,7 +290,7 @@ export default function App() {
         }
       } else {
         const err = await res.json().catch(() => ({}));
-        if (err.form) {
+        if (err.form && !activeForm) {
           setActiveFormItem(err.form);
         }
         setSheetError(err.error || 'Jadwal presentasi belum dapat dimuat.');

@@ -143,6 +143,8 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
     const formId = (req.query.formId as string) || (req.query.form as string) || '';
     const querySheetId = (req.query.sheetId as string) || '';
     const querySheetName = (req.query.sheetName as string) || (req.query.tab as string) || '';
+    const queryStartRow = Number(req.query.startRow) || 54;
+    const queryTitle = (req.query.title as string) || 'Jadwal Presentasi';
 
     // Resolve which form config to use
     let targetForm: FormItem | undefined;
@@ -156,13 +158,16 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
       );
       if (!targetForm) {
         targetForm = {
-          id: querySheetName ? `${querySheetId}-${querySheetName}` : querySheetId,
-          title: 'Jadwal Presentasi',
+          id: formId || (querySheetName ? `${querySheetId}-${querySheetName}` : querySheetId),
+          title: queryTitle,
           sheetId: querySheetId,
           sheetName: querySheetName || 'Sheet1',
-          startRow: 54,
+          startRow: queryStartRow,
           createdAt: Date.now(),
         };
+        if (formId) {
+          formsMap.set(formId, targetForm);
+        }
       }
     } else if (formsMap.size > 0) {
       // Use the first/most recent form
