@@ -23,6 +23,9 @@ import {
   deleteFormFromFirestore,
   saveSessionTokenToFirestore,
   fetchSessionTokenFromFirestore,
+  saveBookingToFirestore,
+  cancelBookingInFirestore,
+  fetchBookingsFromFirestore,
 } from './services/firebase';
 import {
   PresentationSlot,
@@ -284,7 +287,26 @@ export default function App() {
           };
           try {
             const directSlots = await fetchPresentationSlots(sessionToken, sheetConfig);
-            setSlots(directSlots);
+            const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
+            if (redundancy.length > 0) {
+              const merged = directSlots.map((s) => {
+                const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
+                if (match && !s.isBooked) {
+                  return {
+                    ...s,
+                    isBooked: true,
+                    kelasTeori: match.kelasTeori || s.kelasTeori,
+                    namaKelompok: match.namaKelompok || s.namaKelompok,
+                    tema: match.tema || s.tema,
+                    idKelompok: match.idKelompok || s.idKelompok,
+                  };
+                }
+                return s;
+              });
+              setSlots(merged);
+            } else {
+              setSlots(directSlots);
+            }
             return;
           } catch (directErr) {
             console.warn('Direct fetch with session token failed, falling back to /api/public/slots:', directErr);
@@ -341,7 +363,26 @@ export default function App() {
         setIsRefreshing(true);
         setSheetError(null);
         const data = await fetchPresentationSlots(token, sheetConfig);
-        setSlots(data);
+        const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
+        if (redundancy.length > 0) {
+          const merged = data.map((s) => {
+            const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
+            if (match && !s.isBooked) {
+              return {
+                ...s,
+                isBooked: true,
+                kelasTeori: match.kelasTeori || s.kelasTeori,
+                namaKelompok: match.namaKelompok || s.namaKelompok,
+                tema: match.tema || s.tema,
+                idKelompok: match.idKelompok || s.idKelompok,
+              };
+            }
+            return s;
+          });
+          setSlots(merged);
+        } else {
+          setSlots(data);
+        }
         await syncSessionWithBackend(token, sheetConfig);
       } catch (err: unknown) {
         console.error('Error fetching sheet data:', err);
@@ -481,16 +522,36 @@ export default function App() {
   ): Promise<void> => {
     const params = new URLSearchParams(window.location.search);
     const formSlug = params.get('form') || activeFormItem?.id || undefined;
+    const effectiveSheetId = activeFormItem?.sheetId || config?.id || '';
+    const effectiveSheetName = activeFormItem?.sheetName || config?.activeSheetName || 'Sheet1';
 
-    // Direct client call if admin token available
+    // 1. Redundancy: Save booking to Firestore database
+    if (effectiveSheetId) {
+      await saveBookingToFirestore({
+        formId: formSlug,
+        sheetId: effectiveSheetId,
+        sheetName: effectiveSheetName,
+        rowNumber: slot.rowNumber,
+        urutan: slot.urutan,
+        hari: slot.hari,
+        tanggal: slot.tanggal,
+        jam: slot.jam,
+        kelasTeori: payload.kelasTeori,
+        namaKelompok: payload.namaKelompok,
+        tema: payload.tema,
+        idKelompok: payload.idKelompok,
+        bookedByAdmin: false,
+      });
+    }
+
+    // 2. Direct client call if admin token available
     if (accessToken && config) {
       await bookPresentationSlot(accessToken, config, slot, payload);
       await loadScheduleData(accessToken, config);
       return;
     }
 
-    // Direct client call using session token stored in Firestore
-    const effectiveSheetId = activeFormItem?.sheetId || config?.id;
+    // 3. Direct client call using session token stored in Firestore
     if (effectiveSheetId) {
       const sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
       if (sessionToken && config) {
@@ -500,14 +561,14 @@ export default function App() {
       }
     }
 
-    // Fallback: Submit via backend public proxy
+    // 4. Fallback: Submit via backend public proxy
     const res = await fetch('/api/public/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         formId: formSlug,
-        sheetId: activeFormItem?.sheetId || config?.id,
-        sheetName: activeFormItem?.sheetName || config?.activeSheetName,
+        sheetId: effectiveSheetId,
+        sheetName: effectiveSheetName,
         rowNumber: slot.rowNumber,
         kelasTeori: payload.kelasTeori,
         namaKelompok: payload.namaKelompok,
@@ -554,6 +615,22 @@ export default function App() {
         onConfirm: async () => {
           setIsExecutingMutation(true);
           try {
+            // Redundancy: Save to Firestore database
+            await saveBookingToFirestore({
+              sheetId: config.id,
+              sheetName: config.activeSheetName,
+              rowNumber: slot.rowNumber,
+              urutan: slot.urutan,
+              hari: slot.hari,
+              tanggal: slot.tanggal,
+              jam: slot.jam,
+              kelasTeori: payload.kelasTeori,
+              namaKelompok: payload.namaKelompok,
+              tema: payload.tema,
+              idKelompok: payload.idKelompok,
+              bookedByAdmin: true,
+            });
+
             await bookPresentationSlot(accessToken, config, slot, payload);
             setConfirmationState((prev) => ({ ...prev, isOpen: false }));
             await loadScheduleData(accessToken, config);
@@ -588,6 +665,9 @@ export default function App() {
       onConfirm: async () => {
         setIsExecutingMutation(true);
         try {
+          // Redundancy: Remove from Firestore database
+          await cancelBookingInFirestore(config.id, config.activeSheetName, slot.rowNumber);
+
           await cancelPresentationBooking(accessToken, config, slot);
           setConfirmationState((prev) => ({ ...prev, isOpen: false }));
           await loadScheduleData(accessToken, config);

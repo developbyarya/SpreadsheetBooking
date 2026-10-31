@@ -268,3 +268,92 @@ export const fetchSessionTokenFromFirestore = async (sheetId?: string): Promise<
   }
   return null;
 };
+
+export interface BookingRecord {
+  id: string; // `${cleanSheetId}_${sheetName}_row${rowNumber}`
+  formId?: string;
+  sheetId: string;
+  sheetName: string;
+  rowNumber: number;
+  urutan: string;
+  hari: string;
+  tanggal: string;
+  jam: string;
+  kelasTeori: string;
+  namaKelompok: string;
+  tema: string;
+  idKelompok: string;
+  bookedAt: number;
+  status: 'confirmed' | 'cancelled';
+  bookedByAdmin?: boolean;
+}
+
+export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number): string => {
+  const cleanSheet = (sheetId || '').trim();
+  const cleanTab = (sheetName || 'Sheet1').trim().replace(/[^a-zA-Z0-9-_]/g, '_');
+  return `${cleanSheet}_${cleanTab}_row${rowNumber}`;
+};
+
+/**
+ * Save booking redundancy to Firestore ('bookings' collection)
+ */
+export const saveBookingToFirestore = async (
+  booking: Omit<BookingRecord, 'id' | 'bookedAt' | 'status'> & {
+    status?: 'confirmed' | 'cancelled';
+  }
+): Promise<void> => {
+  try {
+    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber);
+    const bookingRef = doc(db, 'bookings', docId);
+    const data: BookingRecord = {
+      ...booking,
+      id: docId,
+      status: booking.status || 'confirmed',
+      bookedAt: Date.now(),
+    };
+    await setDoc(bookingRef, data, { merge: true });
+  } catch (err) {
+    console.warn('Error saving booking redundancy to Firestore:', err);
+  }
+};
+
+/**
+ * Mark booking as cancelled/deleted in Firestore redundancy
+ */
+export const cancelBookingInFirestore = async (
+  sheetId: string,
+  sheetName: string,
+  rowNumber: number
+): Promise<void> => {
+  try {
+    const docId = getBookingDocId(sheetId, sheetName, rowNumber);
+    const bookingRef = doc(db, 'bookings', docId);
+    await deleteDoc(bookingRef);
+  } catch (err) {
+    console.warn('Error cancelling booking in Firestore:', err);
+  }
+};
+
+/**
+ * Fetch redundancy bookings from Firestore
+ */
+export const fetchBookingsFromFirestore = async (
+  sheetId: string,
+  sheetName?: string
+): Promise<BookingRecord[]> => {
+  try {
+    const bookingsCol = collection(db, 'bookings');
+    const snapshot = await getDocs(bookingsCol);
+    const records: BookingRecord[] = [];
+    snapshot.forEach((d) => {
+      const data = d.data() as BookingRecord;
+      if (data.sheetId === sheetId && (!sheetName || data.sheetName === sheetName)) {
+        records.push(data);
+      }
+    });
+    return records;
+  } catch (err) {
+    console.warn('Error fetching bookings from Firestore:', err);
+    return [];
+  }
+};
