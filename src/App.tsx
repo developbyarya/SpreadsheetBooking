@@ -368,6 +368,7 @@ export default function App() {
         setConfig(details);
         localStorage.setItem(STORAGE_KEY_SHEET_ID, details.id);
         localStorage.setItem(STORAGE_KEY_START_ROW, customStartRow.toString());
+        await saveSessionTokenToFirestore(details.id, token, user?.uid);
         await loadScheduleData(token, details);
       } catch (err: unknown) {
         console.error('Error connecting spreadsheet:', err);
@@ -434,6 +435,10 @@ export default function App() {
         setAccessToken(res.accessToken);
         setCachedAccessToken(res.accessToken);
         setIsAdminLoginModalOpen(false);
+        const savedSheetId = localStorage.getItem(STORAGE_KEY_SHEET_ID);
+        if (savedSheetId) {
+          await saveSessionTokenToFirestore(savedSheetId, res.accessToken, res.user.uid);
+        }
       }
     } catch (err: unknown) {
       console.error(err);
@@ -630,7 +635,12 @@ export default function App() {
   if (!user && !isAdminLoginModalOpen) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 selection:text-emerald-900">
-        {slots.length === 0 && !isRefreshing && sheetError ? (
+        {isRefreshing && slots.length === 0 ? (
+          <div className="max-w-lg mx-auto px-4 py-28 text-center space-y-4">
+            <Loader2 className="w-9 h-9 text-emerald-600 animate-spin mx-auto" />
+            <p className="text-sm font-semibold text-slate-600">Memuat jadwal presentasi...</p>
+          </div>
+        ) : slots.length === 0 && !isRefreshing && sheetError ? (
           <div className="max-w-lg mx-auto px-4 py-20 text-center space-y-6">
             <div className="w-16 h-16 rounded-3xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto shadow-xs">
               <Clock className="w-8 h-8" />
