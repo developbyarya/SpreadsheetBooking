@@ -1,0 +1,6 @@
+{
+  "name": "SlotSync - Schedule Booking via Google Sheets",
+  "description": "Book appointments and manage available dates and times directly synced with Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
