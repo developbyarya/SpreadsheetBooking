@@ -225,3 +225,46 @@ export const deleteFormFromFirestore = async (formId: string): Promise<void> => 
   const formRef = doc(db, 'forms', formId);
   await deleteDoc(formRef);
 };
+
+/**
+ * Save active session token to Firestore so public visitors can load and book slots
+ */
+export const saveSessionTokenToFirestore = async (
+  sheetId: string,
+  token: string,
+  ownerId?: string
+): Promise<void> => {
+  try {
+    const sessionData = {
+      sheetId,
+      accessToken: token,
+      updatedAt: Date.now(),
+      ...(ownerId ? { ownerId } : {}),
+    };
+    await setDoc(doc(db, 'sessions', sheetId), sessionData, { merge: true });
+    await setDoc(doc(db, 'sessions', 'latest'), sessionData, { merge: true });
+  } catch (err) {
+    console.warn('Could not save session token to Firestore:', err);
+  }
+};
+
+/**
+ * Fetch active session token for a spreadsheet from Firestore
+ */
+export const fetchSessionTokenFromFirestore = async (sheetId?: string): Promise<string | null> => {
+  try {
+    if (sheetId) {
+      const snap = await getDoc(doc(db, 'sessions', sheetId));
+      if (snap.exists() && snap.data()?.accessToken) {
+        return snap.data().accessToken;
+      }
+    }
+    const latestSnap = await getDoc(doc(db, 'sessions', 'latest'));
+    if (latestSnap.exists() && latestSnap.data()?.accessToken) {
+      return latestSnap.data().accessToken;
+    }
+  } catch (err) {
+    console.warn('Could not fetch session token from Firestore:', err);
+  }
+  return null;
+};

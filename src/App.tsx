@@ -21,6 +21,8 @@ import {
   fetchFormsFromFirestore,
   fetchFormByIdFromFirestore,
   deleteFormFromFirestore,
+  saveSessionTokenToFirestore,
+  fetchSessionTokenFromFirestore,
 } from './services/firebase';
 import {
   PresentationSlot,
@@ -199,6 +201,9 @@ export default function App() {
   const syncSessionWithBackend = useCallback(
     async (token: string, sheetConfig: SpreadsheetConfig) => {
       try {
+        // Save session token to Firestore so public visitors can load and book slots
+        await saveSessionTokenToFirestore(sheetConfig.id, token, user?.uid);
+
         await fetch('/api/owner-session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -210,7 +215,7 @@ export default function App() {
             title: sheetConfig.title,
             url: sheetConfig.url,
           }),
-        });
+        }).catch(() => {});
 
         // Ensure default form exists in Firestore & backend
         const defaultForm: CustomForm = {
@@ -260,13 +265,35 @@ export default function App() {
         }
       }
 
-      const params = new URLSearchParams();
-      if (formSlug) params.set('formId', formSlug);
-
       const effectiveSheetId = activeForm?.sheetId || targetSheetId;
       const effectiveSheetName = activeForm?.sheetName || targetTab;
       const effectiveStartRow = activeForm?.startRow;
       const effectiveTitle = activeForm?.title;
+
+      // Try direct Google Sheets API fetch using session token stored in Firestore
+      if (effectiveSheetId) {
+        const sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
+        if (sessionToken) {
+          const sheetConfig: SpreadsheetConfig = {
+            id: effectiveSheetId,
+            title: effectiveTitle || 'Jadwal Presentasi',
+            url: `https://docs.google.com/spreadsheets/d/${effectiveSheetId}/edit`,
+            activeSheetName: effectiveSheetName || 'Sheet1',
+            sheets: [effectiveSheetName || 'Sheet1'],
+            startRow: Number(effectiveStartRow) || 54,
+          };
+          try {
+            const directSlots = await fetchPresentationSlots(sessionToken, sheetConfig);
+            setSlots(directSlots);
+            return;
+          } catch (directErr) {
+            console.warn('Direct fetch with session token failed, falling back to /api/public/slots:', directErr);
+          }
+        }
+      }
+
+      const params = new URLSearchParams();
+      if (formSlug) params.set('formId', formSlug);
 
       if (effectiveSheetId) params.set('sheetId', effectiveSheetId);
       if (effectiveSheetName) params.set('sheetName', effectiveSheetName);
@@ -457,7 +484,18 @@ export default function App() {
       return;
     }
 
-    // Submit via backend public proxy
+    // Direct client call using session token stored in Firestore
+    const effectiveSheetId = activeFormItem?.sheetId || config?.id;
+    if (effectiveSheetId) {
+      const sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
+      if (sessionToken && config) {
+        await bookPresentationSlot(sessionToken, config, slot, payload);
+        await loadPublicSlots(formSlug, config.id, config.activeSheetName);
+        return;
+      }
+    }
+
+    // Fallback: Submit via backend public proxy
     const res = await fetch('/api/public/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
