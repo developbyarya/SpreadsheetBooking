@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { JWT } from 'google-auth-library';
 
 const app = express();
 app.use(express.json());
@@ -20,6 +21,57 @@ const formsMap = new Map<string, FormItem>();
 const tokenMap = new Map<string, string>();
 let latestToken: string | null = null;
 
+// Cache for Service Account token
+let cachedServiceAccountToken: { token: string; expiresAt: number } | null = null;
+
+/**
+ * Get effective Google OAuth access token:
+ * 1. Primary: Google Service Account from GOOGLE_SERVICE_ACCOUNT_KEY env var (24/7)
+ * 2. Fallback: Owner session token saved in memory
+ */
+export async function getEffectiveGoogleToken(sheetId?: string): Promise<string | null> {
+  const saKeyRaw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (saKeyRaw) {
+    try {
+      if (cachedServiceAccountToken && cachedServiceAccountToken.expiresAt > Date.now() + 300000) {
+        return cachedServiceAccountToken.token;
+      }
+
+      const credentials = typeof saKeyRaw === 'string'
+        ? JSON.parse(saKeyRaw.trim())
+        : saKeyRaw;
+
+      if (credentials.client_email && credentials.private_key) {
+        const client = new JWT({
+          email: credentials.client_email,
+          key: credentials.private_key,
+          scopes: [
+            'https://www.googleapis.com/auth/spreadsheets',
+            'https://www.googleapis.com/auth/drive.file',
+          ],
+        });
+
+        const tokenRes = await client.getAccessToken();
+        if (tokenRes.token) {
+          cachedServiceAccountToken = {
+            token: tokenRes.token,
+            expiresAt: Date.now() + 3500000,
+          };
+          return tokenRes.token;
+        }
+      }
+    } catch (err) {
+      console.warn('Service Account token error:', err);
+    }
+  }
+
+  // Fallback to in-memory session token
+  if (sheetId && tokenMap.has(sheetId)) {
+    return tokenMap.get(sheetId)!;
+  }
+  return latestToken;
+}
+
 // Initialize with a default form if empty
 function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presentasi', title: string = 'Jadwal Presentasi') {
   if (formsMap.size === 0) {
@@ -34,6 +86,17 @@ function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presenta
     });
   }
 }
+
+// Endpoint to provide token to client for direct Google Sheets interaction
+app.get('/api/auth-token', async (req: Request, res: Response) => {
+  const sheetId = (req.query.sheetId as string) || '';
+  const token = await getEffectiveGoogleToken(sheetId);
+  if (!token) {
+    res.status(503).json({ error: 'No active Google Sheets credentials available.' });
+    return;
+  }
+  res.json({ accessToken: token });
+});
 
 // Register owner session with token
 app.post('/api/owner-session', (req: Request, res: Response) => {
@@ -60,9 +123,9 @@ app.get('/api/sheet-tabs', async (req: Request, res: Response) => {
       return;
     }
 
-    const token = tokenMap.get(sheetId) || latestToken;
+    const token = await getEffectiveGoogleToken(sheetId);
     if (!token) {
-      res.status(401).json({ error: 'Admin token not available. Please login first.' });
+      res.status(401).json({ error: 'Kredensial Google Sheets belum tersedia. Silakan hubungi admin.' });
       return;
     }
 
@@ -171,11 +234,11 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
     }
 
     const { sheetId, sheetName, startRow, title, description, id: currentFormId } = targetForm;
-    const token = tokenMap.get(sheetId) || latestToken;
+    const token = await getEffectiveGoogleToken(sheetId);
 
     if (!token) {
       res.status(503).json({
-        error: 'Sesi admin belum aktif untuk spreadsheet ini. Silakan minta admin login terlebih dahulu.',
+        error: 'Sesi atau kredensial Google Sheets belum aktif. Hubungi dosen/admin.',
         form: targetForm,
       });
       return;
@@ -281,9 +344,9 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       }
     }
 
-    const token = tokenMap.get(targetSheetId) || latestToken;
+    const token = await getEffectiveGoogleToken(targetSheetId);
     if (!token) {
-      res.status(503).json({ error: 'Sesi admin belum aktif. Hubungi dosen pengampu.' });
+      res.status(503).json({ error: 'Kredensial Google Sheets belum aktif. Hubungi dosen pengampu.' });
       return;
     }
 

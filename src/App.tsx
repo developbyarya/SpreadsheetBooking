@@ -273,9 +273,17 @@ export default function App() {
       const effectiveStartRow = activeForm?.startRow;
       const effectiveTitle = activeForm?.title;
 
-      // Try direct Google Sheets API fetch using session token stored in Firestore
+      // Try direct Google Sheets API fetch using session token stored in Firestore or Service Account
       if (effectiveSheetId) {
-        const sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
+        let sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
+        if (!sessionToken) {
+          const authRes = await fetch(`/api/auth-token?sheetId=${effectiveSheetId}`).catch(() => null);
+          if (authRes?.ok) {
+            const authData = await authRes.json();
+            sessionToken = authData.accessToken;
+          }
+        }
+
         if (sessionToken) {
           const sheetConfig: SpreadsheetConfig = {
             id: effectiveSheetId,
@@ -285,6 +293,8 @@ export default function App() {
             sheets: [effectiveSheetName || 'Sheet1'],
             startRow: Number(effectiveStartRow) || 54,
           };
+          setConfig(sheetConfig);
+
           try {
             const directSlots = await fetchPresentationSlots(sessionToken, sheetConfig);
             const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
@@ -309,7 +319,7 @@ export default function App() {
             }
             return;
           } catch (directErr) {
-            console.warn('Direct fetch with session token failed, falling back to /api/public/slots:', directErr);
+            console.warn('Direct fetch with token failed, falling back to /api/public/slots:', directErr);
           }
         }
       }
@@ -551,12 +561,31 @@ export default function App() {
       return;
     }
 
-    // 3. Direct client call using session token stored in Firestore
+    // 3. Direct client call using session token (Firestore or Service Account)
+    const effectiveStartRow = activeFormItem?.startRow || config?.startRow || 54;
+    const effectiveTitle = activeFormItem?.title || config?.title || 'Jadwal Presentasi';
+    const targetConfig: SpreadsheetConfig = config || {
+      id: effectiveSheetId,
+      title: effectiveTitle,
+      url: `https://docs.google.com/spreadsheets/d/${effectiveSheetId}/edit`,
+      activeSheetName: effectiveSheetName,
+      sheets: [effectiveSheetName],
+      startRow: effectiveStartRow,
+    };
+
     if (effectiveSheetId) {
-      const sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
-      if (sessionToken && config) {
-        await bookPresentationSlot(sessionToken, config, slot, payload);
-        await loadPublicSlots(formSlug, config.id, config.activeSheetName);
+      let sessionToken = await fetchSessionTokenFromFirestore(effectiveSheetId);
+      if (!sessionToken) {
+        const authRes = await fetch(`/api/auth-token?sheetId=${effectiveSheetId}`).catch(() => null);
+        if (authRes?.ok) {
+          const authData = await authRes.json();
+          sessionToken = authData.accessToken;
+        }
+      }
+
+      if (sessionToken) {
+        await bookPresentationSlot(sessionToken, targetConfig, slot, payload);
+        await loadPublicSlots(formSlug, effectiveSheetId, effectiveSheetName);
         return;
       }
     }
