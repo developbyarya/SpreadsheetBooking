@@ -14,6 +14,7 @@ import {
   Filter,
   Check,
   Award,
+  ChevronDown,
 } from 'lucide-react';
 import { PresentationSlot, PresentationBookingPayload, SpreadsheetConfig } from '../services/sheets';
 
@@ -544,14 +545,24 @@ export const BookingView: React.FC<BookingViewProps> = ({
                                 <BookOpen className="w-3.5 h-3.5 text-slate-400" />
                                 Kelas Teori *
                               </label>
-                              <input
-                                type="text"
-                                required
-                                placeholder="Contoh: Kelas A / TI-3A"
-                                value={kelasTeori}
-                                onChange={(e) => setKelasTeori(e.target.value)}
-                                className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
-                              />
+                              <div className="relative">
+                                <select
+                                  required
+                                  value={kelasTeori}
+                                  onChange={(e) => setKelasTeori(e.target.value)}
+                                  className="w-full appearance-none px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-medium text-slate-800 pr-8 cursor-pointer"
+                                >
+                                  <option value="" disabled>Pilih Kelas (IF-A s/d IF-E)</option>
+                                  {['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'].map((opt) => (
+                                    <option key={opt} value={opt}>
+                                      Kelas {opt}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                                  <ChevronDown className="w-3.5 h-3.5" />
+                                </div>
+                              </div>
                             </div>
 
                             {/* ID_Kelompok */}

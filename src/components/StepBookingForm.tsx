@@ -15,8 +15,11 @@ import {
   AlertCircle,
   Loader2,
   Lock,
+  ChevronDown,
 } from 'lucide-react';
 import { PresentationSlot, PresentationBookingPayload } from '../services/sheets';
+
+export const KELAS_TEORI_OPTIONS = ['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'];
 
 interface StepBookingFormProps {
   slots: PresentationSlot[];
@@ -506,24 +509,61 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   Field 1 / 4
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                  Apa Kelas Teori Anda?
+                  Pilih Kelas Teori Anda
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500">
-                  Masukkan nama kelas teori kelompok Anda (misal: Kelas A, Kelas B, TI-3A, dsb.)
+                  Pilih kelas teori kelompok Anda (tersedia opsi IF-A sampai IF-E)
                 </p>
               </div>
 
-              <div className="space-y-2">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  required
-                  placeholder="Ketik Kelas Teori..."
-                  value={kelasTeori}
-                  onChange={(e) => setKelasTeori(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && handleNext()}
-                  className="w-full px-5 py-4 text-base sm:text-lg bg-white border-2 border-slate-200 rounded-2xl focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 shadow-xs transition-all"
-                />
+              <div className="space-y-4">
+                {/* Dropdown Select */}
+                <div className="relative">
+                  <select
+                    value={kelasTeori}
+                    onChange={(e) => {
+                      setKelasTeori(e.target.value);
+                      setErrorMsg(null);
+                    }}
+                    className="w-full appearance-none px-5 py-4 text-base sm:text-lg bg-white border-2 border-slate-200 rounded-2xl focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 shadow-xs transition-all font-semibold text-slate-800 pr-12 cursor-pointer"
+                  >
+                    <option value="" disabled>
+                      -- Pilih Kelas Teori (IF-A s/d IF-E) --
+                    </option>
+                    {KELAS_TEORI_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        Kelas {opt}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <ChevronDown className="w-5 h-5" />
+                  </div>
+                </div>
+
+                {/* Quick Select Buttons */}
+                <div className="grid grid-cols-5 gap-2 pt-1">
+                  {KELAS_TEORI_OPTIONS.map((opt) => {
+                    const isSelected = kelasTeori === opt;
+                    return (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => {
+                          setKelasTeori(opt);
+                          setErrorMsg(null);
+                        }}
+                        className={`py-3 px-2 rounded-xl text-sm font-bold transition-all text-center border ${
+                          isSelected
+                            ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm ring-2 ring-emerald-600 ring-offset-2'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-slate-300'
+                        }`}
+                      >
+                        {opt}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="flex items-center justify-between pt-4">
@@ -538,7 +578,8 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                 <button
                   type="button"
                   onClick={handleNext}
-                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-2xl text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition-all shadow-md"
+                  disabled={!kelasTeori}
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-2xl text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
                 >
                   <span>Lanjut: ID Kelompok</span>
                   <ArrowRight className="w-4 h-4" />
