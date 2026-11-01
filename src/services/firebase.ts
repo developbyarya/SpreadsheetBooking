@@ -17,6 +17,7 @@ import {
   getDocs,
   query,
   orderBy,
+  onSnapshot,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { CustomForm } from './sheets';
@@ -451,11 +452,10 @@ export const verifyAndConfirmBookingInFirestore = async (
       };
     }
 
-    // Confirm booking
+    // Confirm booking - preserve confirmToken so future visits with the same email link can be recognized
     const confirmedData: Partial<BookingRecord> = {
       status: 'confirmed',
       confirmedAt: Date.now(),
-      confirmToken: '', // Clear token
     };
 
     await setDoc(bookingRef, confirmedData, { merge: true });
@@ -463,6 +463,7 @@ export const verifyAndConfirmBookingInFirestore = async (
     return {
       success: true,
       booking: { ...booking, ...confirmedData },
+      alreadyConfirmed: false,
     };
   } catch (err) {
     console.error('Error verifying booking token in Firestore:', err);
@@ -471,6 +472,30 @@ export const verifyAndConfirmBookingInFirestore = async (
       error: err instanceof Error ? err.message : 'Gagal memverifikasi konfirmasi booking.',
     };
   }
+};
+
+/**
+ * Real-time listener for booking status changes (e.g. pending -> confirmed)
+ */
+export const subscribeToBookingStatus = (
+  bookingId: string,
+  onStatusChange: (booking: BookingRecord) => void,
+  onError?: (err: Error) => void
+): (() => void) => {
+  const bookingRef = doc(db, 'bookings', bookingId);
+  return onSnapshot(
+    bookingRef,
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as BookingRecord;
+        onStatusChange(data);
+      }
+    },
+    (err) => {
+      console.warn('Booking status subscription warning:', err);
+      if (onError) onError(err);
+    }
+  );
 };
 
 /**

@@ -136,7 +136,7 @@ export default function App() {
   // Email confirmation state for ?action=confirm&bookingId=...&token=...
   const [emailConfirmModal, setEmailConfirmModal] = useState<{
     isOpen: boolean;
-    status: 'verifying' | 'success' | 'error';
+    status: 'verifying' | 'success' | 'already_confirmed' | 'error';
     title?: string;
     message?: string;
     booking?: BookingRecord | null;
@@ -145,6 +145,7 @@ export default function App() {
     status: 'verifying',
     booking: null,
   });
+  const hasProcessedConfirmRef = useRef(false);
 
   // Helper to merge fetched Google Sheet slots with Firestore bookings (including 15-min holds)
   const mergeSlotsWithBookings = useCallback((sheetSlots: PresentationSlot[], redundancy: BookingRecord[]): PresentationSlot[] => {
@@ -555,6 +556,9 @@ export default function App() {
     const token = params.get('token');
 
     if (action === 'confirm' && bookingId && token) {
+      if (hasProcessedConfirmRef.current) return;
+      hasProcessedConfirmRef.current = true;
+
       setEmailConfirmModal({
         isOpen: true,
         status: 'verifying',
@@ -583,7 +587,33 @@ export default function App() {
 
           const confirmedBooking = res.booking;
 
-          // 2. Write to Google Spreadsheet (columns E:H)
+          // Case A: Link is clicked again and was ALREADY confirmed previously
+          if (res.alreadyConfirmed) {
+            setEmailConfirmModal({
+              isOpen: true,
+              status: 'already_confirmed',
+              title: 'Sudah Dikonfirmasi',
+              message:
+                'Tautan ini sudah pernah digunakan untuk konfirmasi jadwal presentasi. Data kelompok Anda telah tercatat aman di Google Spreadsheet.',
+              booking: confirmedBooking,
+            });
+
+            // Clean query params
+            const cleanUrl =
+              window.location.pathname +
+              (confirmedBooking.formId ? `?form=${confirmedBooking.formId}` : '');
+            window.history.replaceState({}, document.title, cleanUrl);
+
+            // Reload slots so schedule reflects it
+            loadPublicSlots(
+              confirmedBooking.formId,
+              confirmedBooking.sheetId,
+              confirmedBooking.sheetName
+            );
+            return;
+          }
+
+          // Case B: First-time confirmation -> Write to Google Spreadsheet (columns E:H)
           let tokenToUse: string | null = accessToken;
           if (!tokenToUse && confirmedBooking.sheetId) {
             tokenToUse = await fetchSessionTokenFromFirestore(confirmedBooking.sheetId);
@@ -663,9 +693,7 @@ export default function App() {
           setEmailConfirmModal({
             isOpen: true,
             status: 'success',
-            title: res.alreadyConfirmed
-              ? 'Booking Sudah Terkonfirmasi'
-              : 'Booking Berhasil Dikonfirmasi!',
+            title: 'Booking Berhasil Dikonfirmasi!',
             message:
               'Data kelompok Anda telah terverifikasi dan tercatat resmi di Google Spreadsheet.',
             booking: confirmedBooking,
@@ -1393,6 +1421,103 @@ export default function App() {
               </div>
             )}
 
+            {/* Status: Sudah Dikonfirmasi Sebelumnya */}
+            {emailConfirmModal.status === 'already_confirmed' && emailConfirmModal.booking && (
+              <div>
+                <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-slate-800 p-6 text-white text-center">
+                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
+                    <ShieldCheck className="w-8 h-8 text-white" />
+                  </div>
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/20 text-white backdrop-blur-xs mb-2">
+                    <span>✓ SUDAH DIKONFIRMASI</span>
+                  </div>
+                  <h3 className="text-xl font-bold tracking-tight">
+                    {emailConfirmModal.title || 'Sudah Dikonfirmasi'}
+                  </h3>
+                  <p className="text-blue-100 text-xs mt-1 max-w-sm mx-auto">
+                    {emailConfirmModal.message}
+                  </p>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 text-xs text-blue-900 flex items-center justify-between">
+                    <span className="text-blue-700 font-medium">Status Verifikasi:</span>
+                    <span className="font-semibold text-blue-950 flex items-center gap-1">
+                      <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
+                      Aktif & Resmi di Spreadsheet
+                    </span>
+                  </div>
+
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500">Nomor Sesi</span>
+                      <span className="font-mono font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                        Urutan #{emailConfirmModal.booking.urutan} (Baris {emailConfirmModal.booking.rowNumber})
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Hari & Tanggal:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.hari}, {emailConfirmModal.booking.tanggal}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Jam Presentasi:</span>
+                      <span className="font-semibold font-mono">{emailConfirmModal.booking.jam}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Kelas Teori:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.kelasTeori}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Kelompok:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.namaKelompok} ({emailConfirmModal.booking.idKelompok})</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Tema Presentasi:</span>
+                      <span className="font-semibold max-w-xs text-right">{emailConfirmModal.booking.tema}</span>
+                    </div>
+                    {emailConfirmModal.booking.email && (
+                      <div className="flex justify-between text-slate-700">
+                        <span>Email Terverifikasi:</span>
+                        <span className="font-mono font-semibold text-blue-700">{emailConfirmModal.booking.email}</span>
+                      </div>
+                    )}
+                    {emailConfirmModal.booking.confirmedAt && (
+                      <div className="flex justify-between text-slate-700 pt-1 border-t border-slate-200/60">
+                        <span>Waktu Konfirmasi:</span>
+                        <span className="font-medium text-slate-600">{formatWIB(emailConfirmModal.booking.confirmedAt)}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <a
+                      href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                        `Presentasi: ${emailConfirmModal.booking.namaKelompok} (${emailConfirmModal.booking.idKelompok})`
+                      )}&details=${encodeURIComponent(
+                        `Jadwal Presentasi:\nUrutan: ${emailConfirmModal.booking.urutan}\nHari: ${emailConfirmModal.booking.hari}\nTanggal: ${emailConfirmModal.booking.tanggal}\nJam: ${emailConfirmModal.booking.jam}\nKelas: ${emailConfirmModal.booking.kelasTeori}\nTema: ${emailConfirmModal.booking.tema}\nEmail: ${emailConfirmModal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                    >
+                      <CalendarPlus className="w-4 h-4" />
+                      <span>Simpan ke Google Calendar</span>
+                      <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                      className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                    >
+                      Tutup & Lihat Jadwal
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Status: Baru Saja Berhasil Dikonfirmasi */}
             {emailConfirmModal.status === 'success' && emailConfirmModal.booking && (
               <div>
                 <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-6 text-white text-center">

@@ -28,6 +28,8 @@ import {
   isValidUpnInformatikaEmail,
   createPendingBookingHold,
   cancelBookingInFirestore,
+  subscribeToBookingStatus,
+  getBookingById,
 } from '../services/firebase';
 import { formatWIB, formatCountdown } from '../services/dateTime';
 
@@ -132,6 +134,54 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
+  }, [pendingHold]);
+
+  // Real-time listener: detect when booking is confirmed on another device/tab (e.g. via phone email link)
+  useEffect(() => {
+    if (!pendingHold?.bookingId) return;
+
+    let isSubscribed = true;
+
+    // 1. Real-time Firestore snapshot listener
+    const unsubscribe = subscribeToBookingStatus(
+      pendingHold.bookingId,
+      (updatedBooking) => {
+        if (!isSubscribed) return;
+        if (updatedBooking.status === 'confirmed') {
+          setPendingHold(null);
+          setBookingSuccess({
+            slot: pendingHold.slot,
+            payload: pendingHold.payload,
+          });
+        }
+      },
+      (err) => {
+        console.warn('Realtime listener note:', err);
+      }
+    );
+
+    // 2. Backup periodic polling every 3 seconds in case socket is sleeping or throttled
+    const pollInterval = setInterval(async () => {
+      if (!isSubscribed) return;
+      try {
+        const record = await getBookingById(pendingHold.bookingId);
+        if (record && record.status === 'confirmed' && isSubscribed) {
+          setPendingHold(null);
+          setBookingSuccess({
+            slot: pendingHold.slot,
+            payload: pendingHold.payload,
+          });
+        }
+      } catch (pollErr) {
+        console.warn('Backup polling note:', pollErr);
+      }
+    }, 3000);
+
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+      clearInterval(pollInterval);
+    };
   }, [pendingHold]);
 
   // Auto-focus input on step change
