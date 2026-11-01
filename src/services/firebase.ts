@@ -299,8 +299,12 @@ export interface BookingRecord {
  * 24  = Angkatan 2024
  * xxxx = 4 digit nomor urut mahasiswa
  */
-export const isValidUpnInformatikaEmail = (email: string): boolean => {
+export const isValidUpnInformatikaEmail = (email: string, bypassMode = false): boolean => {
   const clean = (email || '').trim().toLowerCase();
+  if (bypassMode || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EMAIL_BYPASS === 'true')) {
+    // In bypass mode, accept any valid email address format
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
+  }
   return /^12324\d{4}@student\.upnyk\.ac\.id$/i.test(clean);
 };
 

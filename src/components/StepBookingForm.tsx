@@ -40,6 +40,7 @@ interface StepBookingFormProps {
   sheetUrl?: string;
   sheetId?: string;
   formId?: string;
+  emailBypass?: boolean;
   onBookSlot: (
     slot: PresentationSlot,
     payload: PresentationBookingPayload
@@ -66,10 +67,15 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
   sheetUrl,
   sheetId,
   formId,
+  emailBypass = false,
   onBookSlot,
   onOpenAdminLogin,
   isAdminLoggedIn = false,
 }) => {
+  const isBypass = Boolean(
+    emailBypass || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EMAIL_BYPASS === 'true')
+  );
+
   // Current Step:
   // 1 = Pilih Waktu & Jam
   // 2 = Email Mahasiswa (Informatika UPN)
@@ -193,9 +199,11 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         setErrorMsg('Email mahasiswa wajib diisi.');
         return;
       }
-      if (!isValidUpnInformatikaEmail(cleanEmail)) {
+      if (!isValidUpnInformatikaEmail(cleanEmail, isBypass)) {
         setErrorMsg(
-          'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 12324xxxx@student.upnyk.ac.id'
+          isBypass
+            ? 'Format email tidak valid (contoh: user@example.com)'
+            : 'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 12324xxxx@student.upnyk.ac.id'
         );
         return;
       }
@@ -240,9 +248,11 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
     if (!selectedSlot) return;
 
     const cleanEmail = studentEmail.trim().toLowerCase();
-    if (!isValidUpnInformatikaEmail(cleanEmail)) {
+    if (!isValidUpnInformatikaEmail(cleanEmail, isBypass)) {
       setErrorMsg(
-        'Format email salah! Gunakan email institusi UPN Informatika: 12324xxxx@student.upnyk.ac.id'
+        isBypass
+          ? 'Format email tidak valid.'
+          : 'Format email salah! Gunakan email institusi UPN Informatika: 12324xxxx@student.upnyk.ac.id'
       );
       setCurrentStep(2);
       return;
@@ -258,6 +268,28 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
     setIsSubmitting(true);
     setErrorMsg(null);
+
+    // EMAIL_BYPASS Mode: Directly book and commit to Spreadsheet & Firestore without sending email
+    if (isBypass) {
+      try {
+        await onBookSlot(selectedSlot, payload);
+        setBookingSuccess({
+          slot: selectedSlot,
+          payload,
+        });
+        return;
+      } catch (errBypass: unknown) {
+        console.error('Error in email bypass booking:', errBypass);
+        setErrorMsg(
+          errBypass instanceof Error
+            ? errBypass.message
+            : 'Gagal memproses booking langsung.'
+        );
+        return;
+      } finally {
+        setIsSubmitting(false);
+      }
+    }
 
     const effectiveSheetId = sheetId || 'spreadsheet_booking';
     const effectiveSheetName = tabName || 'Sheet1';
@@ -847,15 +879,30 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
           {currentStep === 2 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
-                <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Verifikasi Identitas Mahasiswa
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
+                    Verifikasi Identitas Mahasiswa
+                  </span>
+                  {isBypass && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                      Bypass Mode Active
+                    </span>
+                  )}
+                </div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                  Masukkan Email Institusi Anda
+                  Masukkan Email {isBypass ? 'Anda (Mode Test)' : 'Institusi Anda'}
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500">
-                  Wajib menggunakan email institusi Jurusan Informatika UPN Veteran Yogyakarta:
-                  <strong className="text-emerald-700 ml-1">12324xxxx@student.upnyk.ac.id</strong>
+                  {isBypass ? (
+                    <span className="text-amber-700 font-medium">
+                      Mode test aktif (EMAIL_BYPASS=true): verifikasi email dilewati, Anda dapat menggunakan email apapun.
+                    </span>
+                  ) : (
+                    <>
+                      Wajib menggunakan email institusi Jurusan Informatika UPN Veteran Yogyakarta:
+                      <strong className="text-emerald-700 ml-1">12324xxxx@student.upnyk.ac.id</strong>
+                    </>
+                  )}
                 </p>
               </div>
 
@@ -1209,9 +1256,21 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   </div>
                 </div>
 
-                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
-                  ℹ️ <strong>Catatan:</strong> Data <strong>belum</strong> disimpan ke spreadsheet. Setelah Anda menekan tombol di bawah, slot akan ditahan selama <strong>15 menit</strong> dan link konfirmasi dikirim ke email Anda.
-                </div>
+                {isBypass ? (
+                  <div className="p-3.5 bg-amber-50 border border-amber-300 rounded-2xl text-xs text-amber-950 flex items-start gap-2.5">
+                    <CheckCircle2 className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold">Mode Test Aktif (EMAIL_BYPASS=true):</span>
+                      <p className="mt-0.5 text-amber-900">
+                        Verifikasi email dilewati. Saat Anda menekan tombol di bawah, data akan <strong>langsung disimpan ke Google Spreadsheet</strong> tanpa perlu membuka email.
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                    ℹ️ <strong>Catatan:</strong> Data <strong>belum</strong> disimpan ke spreadsheet. Setelah Anda menekan tombol di bawah, slot akan ditahan selama <strong>15 menit</strong> dan link konfirmasi dikirim ke email Anda.
+                  </div>
+                )}
               </div>
 
               <div className="flex items-center justify-between pt-4">
@@ -1226,12 +1285,21 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="inline-flex items-center gap-2 px-8 py-3.5 text-sm font-bold rounded-2xl text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition-all shadow-lg shadow-emerald-700/20 disabled:opacity-50"
+                  className={`inline-flex items-center gap-2 px-8 py-3.5 text-sm font-bold rounded-2xl text-white transition-all shadow-lg disabled:opacity-50 ${
+                    isBypass
+                      ? 'bg-amber-600 hover:bg-amber-700 active:bg-amber-800 shadow-amber-600/20'
+                      : 'bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 shadow-emerald-700/20'
+                  }`}
                 >
                   {isSubmitting ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Mengunci Slot & Mengirim Email...</span>
+                      <span>{isBypass ? 'Menyimpan ke Spreadsheet...' : 'Mengunci Slot & Mengirim Email...'}</span>
+                    </>
+                  ) : isBypass ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4" />
+                      <span>Konfirmasi & Simpan ke Spreadsheet (Mode Test)</span>
                     </>
                   ) : (
                     <>

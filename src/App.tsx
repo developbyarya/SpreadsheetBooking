@@ -101,6 +101,11 @@ export default function App() {
   // Current active form metadata (for custom title & tab)
   const [activeFormItem, setActiveFormItem] = useState<CustomForm | null>(null);
 
+  // Email test mode bypass flag (EMAIL_BYPASS=true)
+  const [emailBypass, setEmailBypass] = useState<boolean>(() => {
+    return typeof import.meta !== 'undefined' && import.meta.env?.VITE_EMAIL_BYPASS === 'true';
+  });
+
   // Modals state
   const [isSpreadsheetModalOpen, setIsSpreadsheetModalOpen] = useState(false);
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -404,6 +409,9 @@ export default function App() {
       const res = await fetch(`/api/public/slots?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
+        if (typeof data.emailBypass === 'boolean') {
+          setEmailBypass(data.emailBypass);
+        }
         const rawSlots = data.slots || [];
         const targetSheet = effectiveSheetId || data.form?.sheetId;
         const targetSheetTab = effectiveSheetName || data.form?.sheetName;
@@ -525,6 +533,16 @@ export default function App() {
 
     loadFormsFromServer();
     loadPublicSlots(formSlug, sheetIdParam, tabParam);
+
+    // Fetch server configuration (e.g. EMAIL_BYPASS test mode status)
+    fetch('/api/config')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((cfg) => {
+        if (cfg && typeof cfg.emailBypass === 'boolean') {
+          setEmailBypass(cfg.emailBypass);
+        }
+      })
+      .catch(() => {});
   }, [loadFormsFromServer, loadPublicSlots]);
 
   // Handle email confirmation link (?action=confirm&bookingId=...&token=...)
@@ -999,6 +1017,7 @@ export default function App() {
             sheetUrl={config?.url}
             sheetId={config?.id || activeFormItem?.sheetId || ''}
             formId={activeFormItem?.id}
+            emailBypass={emailBypass}
             onBookSlot={handlePublicBookSlot}
             onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
             isAdminLoggedIn={false}
@@ -1228,6 +1247,7 @@ export default function App() {
                   sheetUrl={config.url}
                   sheetId={config.id}
                   formId={activeFormItem?.id}
+                  emailBypass={emailBypass}
                   onBookSlot={handleAdminRequestBooking}
                   onOpenAdminLogin={() => setActiveTab('manager')}
                   isAdminLoggedIn={true}

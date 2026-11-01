@@ -26,6 +26,17 @@ let cachedServiceAccountToken: { token: string; expiresAt: number } | null = nul
 
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0811762236';
 
+/**
+ * Check if email verification bypass / test mode is enabled
+ */
+export const isEmailBypassEnabled = (): boolean => {
+  return (
+    process.env.EMAIL_BYPASS === 'true' ||
+    process.env.VITE_EMAIL_BYPASS === 'true' ||
+    process.env.EMAIL_TEST_MODE === 'true'
+  );
+};
+
 // Persistent default fallback configuration
 const DEFAULT_CONFIG = {
   sheetId: process.env.SPREADSHEET_ID || process.env.DEFAULT_SHEET_ID || '1y9ikk1kCJZsmrO8w5YQEXN8BFtensg8R8AcTo7xtQjQ',
@@ -159,6 +170,13 @@ function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presenta
     });
   }
 }
+
+// Public configuration endpoint
+app.get('/api/config', (_req: Request, res: Response) => {
+  res.json({
+    emailBypass: isEmailBypassEnabled(),
+  });
+});
 
 // Endpoint to provide token to client for direct Google Sheets interaction
 app.get('/api/auth-token', async (req: Request, res: Response) => {
@@ -390,6 +408,7 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
 
     res.json({
       slots,
+      emailBypass: isEmailBypassEnabled(),
       form: {
         id: currentFormId,
         title,
@@ -511,6 +530,21 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
 
     const baseUrl = appUrl || process.env.APP_URL || 'https://spreadsheet-booking.vercel.app';
     const confirmationLink = `${baseUrl.replace(/\/+$/, '')}/?action=confirm&bookingId=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(confirmToken)}`;
+
+    // EMAIL_BYPASS Mode: Bypass actual email sending and signal client that confirmation is immediate
+    if (isEmailBypassEnabled()) {
+      console.log(`[EMAIL_BYPASS] Email verification bypassed for ${email}. Auto-confirmation link: ${confirmationLink}`);
+      res.json({
+        success: true,
+        bypassed: true,
+        emailSent: false,
+        providerUsed: 'bypass',
+        confirmationLink,
+        previewUrl: confirmationLink,
+        message: 'Mode Test Aktif (EMAIL_BYPASS=true): Verifikasi email di-bypass.',
+      });
+      return;
+    }
 
     const title = formTitle || 'Jadwal Presentasi';
     const subject = `[Konfirmasi] Booking Jadwal Presentasi: ${slotDetails.namaKelompok || 'Kelompok'}`;
