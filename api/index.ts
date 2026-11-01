@@ -645,13 +645,14 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
     if (!emailSent && (process.env.GMAIL_USER || process.env.SMTP_HOST)) {
       try {
         const nodemailer = (await import('nodemailer')).default;
+        const cleanedAppPassword = (process.env.GMAIL_APP_PASSWORD || '').replace(/\s+/g, '').trim();
         const transporter = nodemailer.createTransport(
           process.env.GMAIL_USER
             ? {
                 service: 'gmail',
                 auth: {
-                  user: process.env.GMAIL_USER,
-                  pass: process.env.GMAIL_APP_PASSWORD,
+                  user: (process.env.GMAIL_USER || '').trim(),
+                  pass: cleanedAppPassword,
                 },
               }
             : {
@@ -660,7 +661,7 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
                 secure: process.env.SMTP_SECURE === 'true',
                 auth: {
                   user: process.env.SMTP_USER,
-                  pass: process.env.SMTP_PASS,
+                  pass: process.env.SMTP_PASS || cleanedAppPassword,
                 },
               }
         );
