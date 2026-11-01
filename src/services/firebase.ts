@@ -294,10 +294,9 @@ export interface BookingRecord {
 
 /**
  * Validate UPN Informatika student email format:
- * Pattern: 12324xxxx@student.upnyk.ac.id
+ * Pattern: 123xxxxxx@student.upnyk.ac.id
  * 123 = Jurusan Informatika
- * 24  = Angkatan 2024
- * xxxx = 4 digit nomor urut mahasiswa
+ * xxxxxx = 6 digit NIM (Angkatan & Nomor Urut Mahasiswa)
  */
 export const isValidUpnInformatikaEmail = (email: string, bypassMode = false): boolean => {
   const clean = (email || '').trim().toLowerCase();
@@ -305,7 +304,7 @@ export const isValidUpnInformatikaEmail = (email: string, bypassMode = false): b
     // In bypass mode, accept any valid email address format
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
   }
-  return /^12324\d{4}@student\.upnyk\.ac\.id$/i.test(clean);
+  return /^123\d{6}@student\.upnyk\.ac\.id$/i.test(clean);
 };
 
 export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number): string => {

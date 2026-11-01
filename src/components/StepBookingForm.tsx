@@ -203,7 +203,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         setErrorMsg(
           isBypass
             ? 'Format email tidak valid (contoh: user@example.com)'
-            : 'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 12324xxxx@student.upnyk.ac.id'
+            : 'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 123xxxxxx@student.upnyk.ac.id'
         );
         return;
       }
@@ -252,7 +252,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       setErrorMsg(
         isBypass
           ? 'Format email tidak valid.'
-          : 'Format email salah! Gunakan email institusi UPN Informatika: 12324xxxx@student.upnyk.ac.id'
+          : 'Format email salah! Gunakan email institusi UPN Informatika: 123xxxxxx@student.upnyk.ac.id'
       );
       setCurrentStep(2);
       return;
@@ -900,7 +900,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   ) : (
                     <>
                       Wajib menggunakan email institusi Jurusan Informatika UPN Veteran Yogyakarta:
-                      <strong className="text-emerald-700 ml-1">12324xxxx@student.upnyk.ac.id</strong>
+                      <strong className="text-emerald-700 ml-1">123xxxxxx@student.upnyk.ac.id</strong>
                     </>
                   )}
                 </p>
@@ -915,7 +915,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                     ref={inputRef}
                     type="email"
                     required
-                    placeholder="123240001@student.upnyk.ac.id"
+                    placeholder="123xxxxxx@student.upnyk.ac.id (contoh: 123230001@student.upnyk.ac.id)"
                     value={studentEmail}
                     onChange={(e) => {
                       setStudentEmail(e.target.value);
@@ -927,11 +927,10 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                 </div>
 
                 <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1">
-                  <p className="font-semibold">Format Alamat Email:</p>
+                  <p className="font-semibold">Format Alamat Email Mahasiswa:</p>
                   <p>
                     • <strong>123</strong> = Program Studi Informatika <br />
-                    • <strong>24</strong> = Angkatan 2024 <br />
-                    • <strong>xxxx</strong> = 4 digit nomor urut mahasiswa <br />
+                    • <strong>xxxxxx</strong> = 6 digit NIM (Angkatan & Nomor Urut Mahasiswa) <br />
                     • Domain: <strong>@student.upnyk.ac.id</strong>
                   </p>
                 </div>
