@@ -24,10 +24,59 @@ let latestToken: string | null = null;
 // Cache for Service Account token
 let cachedServiceAccountToken: { token: string; expiresAt: number } | null = null;
 
+const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0811762236';
+
+// Persistent default fallback configuration
+const DEFAULT_CONFIG = {
+  sheetId: process.env.SPREADSHEET_ID || process.env.DEFAULT_SHEET_ID || '1y9ikk1kCJZsmrO8w5YQEXN8BFtensg8R8AcTo7xtQjQ',
+  sheetName: process.env.DEFAULT_SHEET_NAME || 'Progress 2',
+  startRow: Number(process.env.DEFAULT_START_ROW) || 59,
+  title: process.env.DEFAULT_FORM_TITLE || 'Salinan dari Progress Report Proyek Akhir Data Science',
+  description: 'Pilih slot waktu dan lengkapi data kelompok Anda',
+};
+
+/**
+ * Synchronize forms from Firestore REST API (runs automatically on cold starts)
+ */
+async function syncFormsFromFirestore(): Promise<void> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/forms`;
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    const docs = data.documents || [];
+    for (const d of docs) {
+      const f = d.fields || {};
+      const id = f.id?.stringValue || d.name.split('/').pop() || 'default';
+      const sheetId = f.sheetId?.stringValue;
+      const sheetName = f.sheetName?.stringValue || 'Sheet1';
+      const title = f.title?.stringValue || 'Jadwal Presentasi';
+      const description = f.description?.stringValue || '';
+      const startRow = Number(f.startRow?.integerValue || f.startRow?.stringValue) || 54;
+      const createdAt = Number(f.createdAt?.integerValue || f.createdAt?.stringValue) || Date.now();
+
+      if (sheetId) {
+        formsMap.set(id, {
+          id,
+          title,
+          description,
+          sheetId,
+          sheetName,
+          startRow,
+          createdAt,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn('Error syncing forms from Firestore in backend:', err);
+  }
+}
+
 /**
  * Get effective Google OAuth access token:
  * 1. Primary: Google Service Account from GOOGLE_SERVICE_ACCOUNT_KEY env var (24/7)
- * 2. Fallback: Owner session token saved in memory
+ * 2. Fallback: Firestore sessions collection
+ * 3. Fallback: Owner session token saved in memory
  */
 export async function getEffectiveGoogleToken(sheetId?: string): Promise<string | null> {
   const saKeyRaw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
@@ -69,7 +118,31 @@ export async function getEffectiveGoogleToken(sheetId?: string): Promise<string 
   if (sheetId && tokenMap.has(sheetId)) {
     return tokenMap.get(sheetId)!;
   }
-  return latestToken;
+  if (latestToken) {
+    return latestToken;
+  }
+
+  // Fallback: Read session token from Firestore sessions collection
+  const targetSheetId = sheetId || DEFAULT_CONFIG.sheetId;
+  if (targetSheetId) {
+    try {
+      const sessionUrl = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/sessions/${encodeURIComponent(targetSheetId)}`;
+      const res = await fetch(sessionUrl);
+      if (res.ok) {
+        const docData = await res.json();
+        const firestoreToken = docData.fields?.accessToken?.stringValue;
+        if (firestoreToken) {
+          tokenMap.set(targetSheetId, firestoreToken);
+          latestToken = firestoreToken;
+          return firestoreToken;
+        }
+      }
+    } catch (sessionErr) {
+      console.warn('Error reading session token from Firestore in backend:', sessionErr);
+    }
+  }
+
+  return null;
 }
 
 // Initialize with a default form if empty
@@ -152,7 +225,10 @@ app.get('/api/sheet-tabs', async (req: Request, res: Response) => {
 });
 
 // Get all registered forms
-app.get('/api/forms', (_req: Request, res: Response) => {
+app.get('/api/forms', async (_req: Request, res: Response) => {
+  if (formsMap.size === 0) {
+    await syncFormsFromFirestore();
+  }
   const list = Array.from(formsMap.values()).sort((a, b) => b.createdAt - a.createdAt);
   res.json({ forms: list });
 });
@@ -201,6 +277,11 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
     const queryStartRow = Number(req.query.startRow) || 54;
     const queryTitle = (req.query.title as string) || 'Jadwal Presentasi';
 
+    // If formsMap is empty (cold start in serverless), sync from Firestore
+    if (formsMap.size === 0) {
+      await syncFormsFromFirestore();
+    }
+
     let targetForm: FormItem | undefined;
 
     if (formId && formsMap.has(formId)) {
@@ -223,14 +304,21 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
         }
       }
     } else if (formsMap.size > 0) {
-      targetForm = Array.from(formsMap.values())[0];
+      targetForm = formsMap.get('default') || Array.from(formsMap.values())[0];
     }
 
+    // Always ensure a valid form is ready (fallback to persistent default)
     if (!targetForm) {
-      res.status(503).json({
-        error: 'Belum ada jadwal form yang aktif. Silakan minta admin/dosen untuk login dan membuat link jadwal.',
-      });
-      return;
+      targetForm = {
+        id: 'default',
+        title: DEFAULT_CONFIG.title,
+        description: DEFAULT_CONFIG.description,
+        sheetId: DEFAULT_CONFIG.sheetId,
+        sheetName: DEFAULT_CONFIG.sheetName,
+        startRow: DEFAULT_CONFIG.startRow,
+        createdAt: Date.now(),
+      };
+      formsMap.set('default', targetForm);
     }
 
     const { sheetId, sheetName, startRow, title, description, id: currentFormId } = targetForm;

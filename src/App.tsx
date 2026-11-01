@@ -311,17 +311,44 @@ export default function App() {
       let activeForm: CustomForm | null = null;
       if (formSlug) {
         activeForm = await fetchFormByIdFromFirestore(formSlug);
-        if (activeForm) {
-          setActiveFormItem(activeForm);
-          setConfig((prev) => ({
-            id: activeForm!.sheetId || prev?.id || '',
-            url: prev?.url || `https://docs.google.com/spreadsheets/d/${activeForm!.sheetId}/edit`,
-            sheets: prev?.sheets || [activeForm!.sheetName],
-            title: activeForm!.title || 'Jadwal Presentasi',
-            activeSheetName: activeForm!.sheetName || 'Jadwal Presentasi',
-            startRow: activeForm!.startRow || 54,
-          }));
+      } else {
+        // If no slug in URL, look for default or any form in Firestore
+        const firestoreForms = await fetchFormsFromFirestore();
+        if (firestoreForms && firestoreForms.length > 0) {
+          activeForm = firestoreForms.find((f) => f.id === 'default') || firestoreForms[0];
         }
+      }
+
+      // If still no form found, check localStorage
+      if (!activeForm && !targetSheetId) {
+        const savedSheetId = localStorage.getItem(STORAGE_KEY_SHEET_ID);
+        if (savedSheetId) {
+          targetSheetId = savedSheetId;
+        }
+      }
+
+      // If still completely empty, fallback to persistent default form
+      if (!activeForm && !targetSheetId) {
+        activeForm = {
+          id: 'default',
+          title: 'Salinan dari Progress Report Proyek Akhir Data Science',
+          sheetId: '1y9ikk1kCJZsmrO8w5YQEXN8BFtensg8R8AcTo7xtQjQ',
+          sheetName: 'Progress 2',
+          startRow: 59,
+          createdAt: Date.now(),
+        };
+      }
+
+      if (activeForm) {
+        setActiveFormItem(activeForm);
+        setConfig((prev) => ({
+          id: activeForm!.sheetId || prev?.id || '',
+          url: prev?.url || `https://docs.google.com/spreadsheets/d/${activeForm!.sheetId}/edit`,
+          sheets: prev?.sheets || [activeForm!.sheetName],
+          title: activeForm!.title || 'Jadwal Presentasi',
+          activeSheetName: activeForm!.sheetName || 'Jadwal Presentasi',
+          startRow: activeForm!.startRow || 54,
+        }));
       }
 
       const effectiveSheetId = activeForm?.sheetId || targetSheetId;
@@ -694,6 +721,9 @@ export default function App() {
     await logout();
     setUser(null);
     setAccessToken(null);
+    setActiveTab('booking');
+    // Ensure public booking slots remain open immediately after logout
+    loadPublicSlots();
   };
 
   // Create presentation template spreadsheet (Admin)
