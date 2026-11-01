@@ -23,6 +23,8 @@ export interface PresentationSlot {
   tema: string; // Column G (Tema / Topik Presentasi)
   idKelompok: string; // Column H (ID_Kelompok)
   isBooked: boolean; // True if namaKelompok or idKelompok is not empty
+  isHeld?: boolean; // True if temporarily held for email confirmation (15 mins)
+  heldExpiresAt?: number;
 }
 
 export interface PresentationBookingPayload {
@@ -30,6 +32,7 @@ export interface PresentationBookingPayload {
   namaKelompok: string;
   tema: string;
   idKelompok: string;
+  email?: string;
 }
 
 export interface CustomForm {

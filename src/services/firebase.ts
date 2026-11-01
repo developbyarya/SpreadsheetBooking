@@ -283,10 +283,26 @@ export interface BookingRecord {
   namaKelompok: string;
   tema: string;
   idKelompok: string;
+  email?: string;
   bookedAt: number;
-  status: 'confirmed' | 'cancelled';
+  status: 'pending' | 'confirmed' | 'cancelled';
+  confirmToken?: string;
+  expiresAt?: number; // timestamp 15 minutes from creation
+  confirmedAt?: number;
   bookedByAdmin?: boolean;
 }
+
+/**
+ * Validate UPN Informatika student email format:
+ * Pattern: 12324xxxx@student.upnyk.ac.id
+ * 123 = Jurusan Informatika
+ * 24  = Angkatan 2024
+ * xxxx = 4 digit nomor urut mahasiswa
+ */
+export const isValidUpnInformatikaEmail = (email: string): boolean => {
+  const clean = (email || '').trim().toLowerCase();
+  return /^12324\d{4}@student\.upnyk\.ac\.id$/i.test(clean);
+};
 
 export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number): string => {
   const cleanSheet = (sheetId || '').trim();
@@ -295,11 +311,186 @@ export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: n
 };
 
 /**
+ * Check if a booking is active (either confirmed, or pending within 15 min expiration)
+ */
+export const isBookingActive = (booking: BookingRecord): boolean => {
+  if (booking.status === 'confirmed') return true;
+  if (booking.status === 'pending') {
+    return Boolean(booking.expiresAt && Date.now() < booking.expiresAt);
+  }
+  return false;
+};
+
+/**
+ * Create a 15-minute temporary pending hold on a slot in Firestore.
+ * Prevents race conditions and duplicates before email confirmation.
+ */
+export const createPendingBookingHold = async (
+  booking: Omit<BookingRecord, 'id' | 'bookedAt' | 'status' | 'confirmToken' | 'expiresAt'>
+): Promise<{
+  success: boolean;
+  bookingId: string;
+  confirmToken?: string;
+  expiresAt?: number;
+  error?: string;
+}> => {
+  try {
+    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber);
+    const bookingRef = doc(db, 'bookings', docId);
+
+    // Check existing booking doc
+    const existingSnap = await getDoc(bookingRef);
+    if (existingSnap.exists()) {
+      const existing = existingSnap.data() as BookingRecord;
+      if (existing.status === 'confirmed') {
+        return {
+          success: false,
+          bookingId: docId,
+          error: `Slot ini telah resmi dibooking oleh ${existing.namaKelompok}. Silakan pilih slot lain.`,
+        };
+      }
+      if (existing.status === 'pending' && existing.expiresAt && Date.now() < existing.expiresAt) {
+        // Still within 15 min hold by another user
+        const remainingSeconds = Math.ceil((existing.expiresAt - Date.now()) / 1000);
+        const remainingMins = Math.ceil(remainingSeconds / 60);
+        return {
+          success: false,
+          bookingId: docId,
+          error: `Slot ini sedang ditahan sementara oleh kelompok lain (menunggu konfirmasi email, sisa ~${remainingMins} menit).`,
+        };
+      }
+    }
+
+    // Generate random confirmation token and 15-minute expiration
+    const confirmToken = typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes from now
+
+    const data: BookingRecord = {
+      ...booking,
+      id: docId,
+      status: 'pending',
+      confirmToken,
+      expiresAt,
+      bookedAt: Date.now(),
+    };
+
+    await setDoc(bookingRef, data, { merge: true });
+
+    return {
+      success: true,
+      bookingId: docId,
+      confirmToken,
+      expiresAt,
+    };
+  } catch (err) {
+    console.error('Error creating pending booking hold in Firestore:', err);
+    return {
+      success: false,
+      bookingId: '',
+      error: err instanceof Error ? err.message : 'Gagal membuat reservasi sementara di database.',
+    };
+  }
+};
+
+/**
+ * Verify token and mark booking as confirmed in Firestore
+ */
+export const verifyAndConfirmBookingInFirestore = async (
+  bookingId: string,
+  token: string
+): Promise<{
+  success: boolean;
+  booking?: BookingRecord;
+  alreadyConfirmed?: boolean;
+  expired?: boolean;
+  error?: string;
+}> => {
+  try {
+    const bookingRef = doc(db, 'bookings', bookingId);
+    const snap = await getDoc(bookingRef);
+
+    if (!snap.exists()) {
+      return {
+        success: false,
+        error: 'Data booking tidak ditemukan atau telah dihapus.',
+      };
+    }
+
+    const booking = snap.data() as BookingRecord;
+
+    // Check if already confirmed
+    if (booking.status === 'confirmed') {
+      return {
+        success: true,
+        booking,
+        alreadyConfirmed: true,
+      };
+    }
+
+    // Check token matching
+    if (!booking.confirmToken || booking.confirmToken !== token) {
+      return {
+        success: false,
+        error: 'Token verifikasi email tidak valid atau sudah tidak berlaku.',
+      };
+    }
+
+    // Check 15-minute expiration
+    if (booking.expiresAt && Date.now() > booking.expiresAt) {
+      // Mark as cancelled or delete
+      await deleteDoc(bookingRef).catch(() => {});
+      return {
+        success: false,
+        expired: true,
+        error: 'Masa berlaku konfirmasi telah berakhir (lebih dari 15 menit). Slot telah dilepas kembali agar dapat dipilih mahasiswa lain.',
+      };
+    }
+
+    // Confirm booking
+    const confirmedData: Partial<BookingRecord> = {
+      status: 'confirmed',
+      confirmedAt: Date.now(),
+      confirmToken: '', // Clear token
+    };
+
+    await setDoc(bookingRef, confirmedData, { merge: true });
+
+    return {
+      success: true,
+      booking: { ...booking, ...confirmedData },
+    };
+  } catch (err) {
+    console.error('Error verifying booking token in Firestore:', err);
+    return {
+      success: false,
+      error: err instanceof Error ? err.message : 'Gagal memverifikasi konfirmasi booking.',
+    };
+  }
+};
+
+/**
+ * Fetch booking record by ID
+ */
+export const getBookingById = async (bookingId: string): Promise<BookingRecord | null> => {
+  try {
+    const snap = await getDoc(doc(db, 'bookings', bookingId));
+    if (snap.exists()) {
+      return snap.data() as BookingRecord;
+    }
+  } catch (err) {
+    console.warn(`Error fetching booking ${bookingId}:`, err);
+  }
+  return null;
+};
+
+/**
  * Save booking redundancy to Firestore ('bookings' collection)
  */
 export const saveBookingToFirestore = async (
   booking: Omit<BookingRecord, 'id' | 'bookedAt' | 'status'> & {
-    status?: 'confirmed' | 'cancelled';
+    status?: 'pending' | 'confirmed' | 'cancelled';
   }
 ): Promise<void> => {
   try {

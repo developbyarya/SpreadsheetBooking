@@ -411,4 +411,167 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
   }
 });
 
+// Send booking confirmation link to student institutional email
+app.post('/api/send-confirmation', async (req: Request, res: Response) => {
+  try {
+    const { email, bookingId, confirmToken, slotDetails, appUrl, formTitle } = req.body;
+
+    if (!email || !bookingId || !confirmToken || !slotDetails) {
+      res.status(400).json({ error: 'Data email konfirmasi tidak lengkap' });
+      return;
+    }
+
+    const baseUrl = appUrl || process.env.APP_URL || 'https://spreadsheet-booking.vercel.app';
+    const confirmationLink = `${baseUrl.replace(/\/+$/, '')}/?action=confirm&bookingId=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(confirmToken)}`;
+
+    const title = formTitle || 'Jadwal Presentasi';
+    const subject = `[Konfirmasi] Booking Jadwal Presentasi: ${slotDetails.namaKelompok || 'Kelompok'}`;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <style>
+          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #1e293b; background-color: #f8fafc; margin: 0; padding: 24px; }
+          .container { max-width: 560px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+          .header { background: #059669; color: #ffffff; padding: 24px 32px; text-align: center; }
+          .header h1 { margin: 0; font-size: 20px; font-weight: 700; }
+          .header p { margin: 6px 0 0; font-size: 13px; opacity: 0.9; }
+          .content { padding: 32px; }
+          .slot-card { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 12px; padding: 18px 20px; margin: 20px 0; }
+          .slot-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
+          .slot-label { color: #64748b; font-weight: 500; }
+          .slot-val { color: #0f172a; font-weight: 700; }
+          .btn-container { text-align: center; margin: 30px 0 20px; }
+          .btn { display: inline-block; background-color: #059669; color: #ffffff !important; font-weight: 700; font-size: 15px; padding: 14px 28px; text-decoration: none; border-radius: 10px; box-shadow: 0 4px 6px -1px rgba(5, 150, 105, 0.4); }
+          .warning-box { background: #fffbeb; border: 1px solid #fde68a; border-radius: 10px; padding: 14px 16px; margin-top: 24px; font-size: 13px; color: #92400e; }
+          .footer { padding: 20px 32px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #f1f5f9; background: #f8fafc; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <h1>${title}</h1>
+            <p>Konfirmasi Pemesanan Slot Jadwal Presentasi</p>
+          </div>
+          <div class="content">
+            <p>Halo Mahasiswa Teknik Informatika UPN,</p>
+            <p>Anda menerima email ini karena kelompok Anda baru saja memilih slot jadwal presentasi pada form SlotSync. Mohon konfirmasi pemesanan Anda:</p>
+            
+            <div class="slot-card">
+              <div class="slot-row"><span class="slot-label">Hari & Tanggal:</span> <span class="slot-val">${slotDetails.hari}, ${slotDetails.tanggal}</span></div>
+              <div class="slot-row"><span class="slot-label">Waktu:</span> <span class="slot-val">${slotDetails.jam} (Urutan #${slotDetails.urutan})</span></div>
+              <div class="slot-row"><span class="slot-label">Kelas Teori:</span> <span class="slot-val">${slotDetails.kelasTeori}</span></div>
+              <div class="slot-row"><span class="slot-label">Nama Kelompok:</span> <span class="slot-val">${slotDetails.namaKelompok}</span></div>
+              <div class="slot-row"><span class="slot-label">ID Kelompok:</span> <span class="slot-val">${slotDetails.idKelompok}</span></div>
+              <div class="slot-row"><span class="slot-label">Tema:</span> <span class="slot-val">${slotDetails.tema}</span></div>
+            </div>
+
+            <div class="btn-container">
+              <a href="${confirmationLink}" target="_blank" class="btn">Konfirmasi & Simpan ke Spreadsheet</a>
+            </div>
+
+            <div class="warning-box">
+              ⚠️ <strong>PENTING:</strong> Slot presentasi ini <strong>hanya ditahan selama 15 menit</strong>. Jika Anda tidak mengklik tombol konfirmasi di atas dalam waktu 15 menit, slot akan otomatis dilepas kembali dan data <strong>TIDAK</strong> akan dicatat ke Google Spreadsheet.
+            </div>
+
+            <p style="font-size: 12px; color: #64748b; margin-top: 20px;">Jika tombol di atas tidak dapat diklik, salin tautan berikut di browser Anda:<br/><a href="${confirmationLink}" style="word-break: break-all; color: #059669;">${confirmationLink}</a></p>
+          </div>
+          <div class="footer">
+            Email otomatis dikirimkan oleh SlotSync • Jurusan Informatika UPN "Veteran" Yogyakarta
+          </div>
+        </div>
+      </body>
+      </html>
+    `;
+
+    let emailSent = false;
+    let providerUsed = 'none';
+
+    // 1. Try Resend if RESEND_API_KEY is configured
+    if (process.env.RESEND_API_KEY) {
+      try {
+        const resendFrom = process.env.RESEND_FROM || 'SlotSync <onboarding@resend.dev>';
+        const resendRes = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            from: resendFrom,
+            to: [email],
+            subject,
+            html: htmlContent,
+          }),
+        });
+
+        if (resendRes.ok) {
+          emailSent = true;
+          providerUsed = 'resend';
+        } else {
+          const errData = await resendRes.json().catch(() => ({}));
+          console.warn('Resend API error:', errData);
+        }
+      } catch (resendErr) {
+        console.warn('Failed to send via Resend:', resendErr);
+      }
+    }
+
+    // 2. Try Nodemailer / Gmail SMTP if GMAIL_USER or SMTP_HOST is configured
+    if (!emailSent && (process.env.GMAIL_USER || process.env.SMTP_HOST)) {
+      try {
+        const nodemailer = (await import('nodemailer')).default;
+        const transporter = nodemailer.createTransport(
+          process.env.GMAIL_USER
+            ? {
+                service: 'gmail',
+                auth: {
+                  user: process.env.GMAIL_USER,
+                  pass: process.env.GMAIL_APP_PASSWORD,
+                },
+              }
+            : {
+                host: process.env.SMTP_HOST,
+                port: Number(process.env.SMTP_PORT) || 587,
+                secure: process.env.SMTP_SECURE === 'true',
+                auth: {
+                  user: process.env.SMTP_USER,
+                  pass: process.env.SMTP_PASS,
+                },
+              }
+        );
+
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.GMAIL_USER || '"SlotSync" <noreply@slotsync.app>',
+          to: email,
+          subject,
+          html: htmlContent,
+        });
+
+        emailSent = true;
+        providerUsed = 'smtp';
+      } catch (smtpErr) {
+        console.warn('Failed to send via SMTP:', smtpErr);
+      }
+    }
+
+    console.log(`[Email Confirmation] Target: ${email}, Link: ${confirmationLink}, Sent: ${emailSent} (${providerUsed})`);
+
+    res.json({
+      success: true,
+      emailSent,
+      providerUsed,
+      previewUrl: !emailSent ? confirmationLink : undefined,
+      message: emailSent
+        ? `Link konfirmasi berhasil dikirimkan ke ${email}.`
+        : `Email berhasil disiapkan. (Gunakan tautan konfirmasi: ${confirmationLink})`,
+    });
+  } catch (error: unknown) {
+    console.error('Error sending confirmation email:', error);
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Server error' });
+  }
+});
+
 export default app;

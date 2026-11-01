@@ -26,6 +26,8 @@ import {
   saveBookingToFirestore,
   cancelBookingInFirestore,
   fetchBookingsFromFirestore,
+  verifyAndConfirmBookingInFirestore,
+  BookingRecord,
 } from './services/firebase';
 import {
   PresentationSlot,
@@ -59,6 +61,13 @@ import {
   BookOpen,
   ArrowRight,
   Sparkles,
+  CheckCircle2,
+  XCircle,
+  CalendarPlus,
+  Download,
+  ExternalLink,
+  MailCheck,
+  ShieldCheck,
 } from 'lucide-react';
 
 const STORAGE_KEY_SHEET_ID = 'slotsync_presentation_sheet_id';
@@ -116,6 +125,53 @@ export default function App() {
     onConfirm: async () => {},
   });
   const [isExecutingMutation, setIsExecutingMutation] = useState(false);
+
+  // Email confirmation state for ?action=confirm&bookingId=...&token=...
+  const [emailConfirmModal, setEmailConfirmModal] = useState<{
+    isOpen: boolean;
+    status: 'verifying' | 'success' | 'error';
+    title?: string;
+    message?: string;
+    booking?: BookingRecord | null;
+  }>({
+    isOpen: false,
+    status: 'verifying',
+    booking: null,
+  });
+
+  // Helper to merge fetched Google Sheet slots with Firestore bookings (including 15-min holds)
+  const mergeSlotsWithBookings = useCallback((sheetSlots: PresentationSlot[], redundancy: BookingRecord[]): PresentationSlot[] => {
+    const now = Date.now();
+    return sheetSlots.map((s) => {
+      const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
+      if (match) {
+        if (match.status === 'confirmed') {
+          return {
+            ...s,
+            isBooked: true,
+            isHeld: false,
+            kelasTeori: match.kelasTeori || s.kelasTeori,
+            namaKelompok: match.namaKelompok || s.namaKelompok,
+            tema: match.tema || s.tema,
+            idKelompok: match.idKelompok || s.idKelompok,
+          };
+        }
+        if (match.status === 'pending' && match.expiresAt && now < match.expiresAt) {
+          return {
+            ...s,
+            isBooked: true,
+            isHeld: true,
+            heldExpiresAt: match.expiresAt,
+            kelasTeori: match.kelasTeori || s.kelasTeori,
+            namaKelompok: match.namaKelompok || s.namaKelompok,
+            tema: match.tema || s.tema,
+            idKelompok: match.idKelompok || s.idKelompok,
+          };
+        }
+      }
+      return s;
+    });
+  }, []);
 
   // Load registered forms from Firestore (with fallback to backend/localStorage)
   const loadFormsFromServer = useCallback(async () => {
@@ -299,21 +355,7 @@ export default function App() {
             const directSlots = await fetchPresentationSlots(sessionToken, sheetConfig);
             const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
             if (redundancy.length > 0) {
-              const merged = directSlots.map((s) => {
-                const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
-                if (match && !s.isBooked) {
-                  return {
-                    ...s,
-                    isBooked: true,
-                    kelasTeori: match.kelasTeori || s.kelasTeori,
-                    namaKelompok: match.namaKelompok || s.namaKelompok,
-                    tema: match.tema || s.tema,
-                    idKelompok: match.idKelompok || s.idKelompok,
-                  };
-                }
-                return s;
-              });
-              setSlots(merged);
+              setSlots(mergeSlotsWithBookings(directSlots, redundancy));
             } else {
               setSlots(directSlots);
             }
@@ -335,7 +377,15 @@ export default function App() {
       const res = await fetch(`/api/public/slots?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        setSlots(data.slots || []);
+        const rawSlots = data.slots || [];
+        const targetSheet = effectiveSheetId || data.form?.sheetId;
+        const targetSheetTab = effectiveSheetName || data.form?.sheetName;
+        if (targetSheet) {
+          const redundancy = await fetchBookingsFromFirestore(targetSheet, targetSheetTab).catch(() => []);
+          setSlots(redundancy.length > 0 ? mergeSlotsWithBookings(rawSlots, redundancy) : rawSlots);
+        } else {
+          setSlots(rawSlots);
+        }
         if (data.form && !activeForm) {
           setActiveFormItem(data.form);
           setConfig((prev) => ({
@@ -359,7 +409,7 @@ export default function App() {
     } finally {
       setIsRefreshing(false);
     }
-  }, []);
+  }, [mergeSlotsWithBookings]);
 
   // Refresh schedule slots using admin token if available
   const loadScheduleData = useCallback(
@@ -375,21 +425,7 @@ export default function App() {
         const data = await fetchPresentationSlots(token, sheetConfig);
         const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
         if (redundancy.length > 0) {
-          const merged = data.map((s) => {
-            const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
-            if (match && !s.isBooked) {
-              return {
-                ...s,
-                isBooked: true,
-                kelasTeori: match.kelasTeori || s.kelasTeori,
-                namaKelompok: match.namaKelompok || s.namaKelompok,
-                tema: match.tema || s.tema,
-                idKelompok: match.idKelompok || s.idKelompok,
-              };
-            }
-            return s;
-          });
-          setSlots(merged);
+          setSlots(mergeSlotsWithBookings(data, redundancy));
         } else {
           setSlots(data);
         }
@@ -405,7 +441,7 @@ export default function App() {
         setIsRefreshing(false);
       }
     },
-    [syncSessionWithBackend, loadPublicSlots]
+    [syncSessionWithBackend, loadPublicSlots, mergeSlotsWithBookings]
   );
 
   // Connect spreadsheet by ID or URL (Admin)
@@ -463,6 +499,158 @@ export default function App() {
     loadFormsFromServer();
     loadPublicSlots(formSlug, sheetIdParam, tabParam);
   }, [loadFormsFromServer, loadPublicSlots]);
+
+  // Handle email confirmation link (?action=confirm&bookingId=...&token=...)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const action = params.get('action');
+    const bookingId = params.get('bookingId');
+    const token = params.get('token');
+
+    if (action === 'confirm' && bookingId && token) {
+      setEmailConfirmModal({
+        isOpen: true,
+        status: 'verifying',
+        title: 'Memverifikasi Konfirmasi Booking...',
+        message:
+          'Mohon tunggu, kami sedang memvalidasi token dan menyimpan data Anda ke Google Spreadsheet...',
+        booking: null,
+      });
+
+      const executeConfirmation = async () => {
+        try {
+          // 1. Verify and update booking status to 'confirmed' in Firestore
+          const res = await verifyAndConfirmBookingInFirestore(bookingId, token);
+          if (!res.success || !res.booking) {
+            setEmailConfirmModal({
+              isOpen: true,
+              status: 'error',
+              title: res.expired ? 'Masa Berlaku Kedaluwarsa' : 'Verifikasi Gagal',
+              message:
+                res.error ||
+                'Tautan konfirmasi tidak valid atau masa berlaku 15 menit telah habis. Slot telah dilepaskan kembali.',
+              booking: null,
+            });
+            return;
+          }
+
+          const confirmedBooking = res.booking;
+
+          // 2. Write to Google Spreadsheet (columns E:H)
+          let tokenToUse: string | null = accessToken;
+          if (!tokenToUse && confirmedBooking.sheetId) {
+            tokenToUse = await fetchSessionTokenFromFirestore(confirmedBooking.sheetId);
+            if (!tokenToUse) {
+              const authRes = await fetch(`/api/auth-token?sheetId=${confirmedBooking.sheetId}`).catch(
+                () => null
+              );
+              if (authRes?.ok) {
+                const authData = await authRes.json();
+                tokenToUse = authData.accessToken;
+              }
+            }
+          }
+
+          const targetConfig: SpreadsheetConfig = {
+            id: confirmedBooking.sheetId,
+            title: 'Jadwal Presentasi',
+            url: `https://docs.google.com/spreadsheets/d/${confirmedBooking.sheetId}/edit`,
+            activeSheetName: confirmedBooking.sheetName || 'Sheet1',
+            sheets: [confirmedBooking.sheetName || 'Sheet1'],
+            startRow: 54,
+          };
+
+          const targetSlot: PresentationSlot = {
+            rowNumber: confirmedBooking.rowNumber,
+            urutan: String(confirmedBooking.urutan || ''),
+            hari: confirmedBooking.hari || '',
+            tanggal: confirmedBooking.tanggal || '',
+            jam: confirmedBooking.jam || '',
+            kelasTeori: confirmedBooking.kelasTeori || '',
+            namaKelompok: confirmedBooking.namaKelompok || '',
+            tema: confirmedBooking.tema || '',
+            idKelompok: confirmedBooking.idKelompok || '',
+            isBooked: true,
+          };
+
+          const targetPayload: PresentationBookingPayload = {
+            kelasTeori: confirmedBooking.kelasTeori,
+            namaKelompok: confirmedBooking.namaKelompok,
+            tema: confirmedBooking.tema,
+            idKelompok: confirmedBooking.idKelompok,
+            email: confirmedBooking.email,
+          };
+
+          let wroteDirectly = false;
+          if (tokenToUse) {
+            try {
+              await bookPresentationSlot(tokenToUse, targetConfig, targetSlot, targetPayload);
+              wroteDirectly = true;
+            } catch (errDirect) {
+              console.warn(
+                'Direct sheets write with token failed, falling back to /api/public/book:',
+                errDirect
+              );
+            }
+          }
+
+          if (!wroteDirectly) {
+            await fetch('/api/public/book', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                formId: confirmedBooking.formId,
+                sheetId: confirmedBooking.sheetId,
+                sheetName: confirmedBooking.sheetName,
+                rowNumber: confirmedBooking.rowNumber,
+                kelasTeori: confirmedBooking.kelasTeori,
+                namaKelompok: confirmedBooking.namaKelompok,
+                tema: confirmedBooking.tema,
+                idKelompok: confirmedBooking.idKelompok,
+              }),
+            }).catch((errProxy) => {
+              console.warn('Public book proxy write note:', errProxy);
+            });
+          }
+
+          setEmailConfirmModal({
+            isOpen: true,
+            status: 'success',
+            title: res.alreadyConfirmed
+              ? 'Booking Sudah Terkonfirmasi'
+              : 'Booking Berhasil Dikonfirmasi!',
+            message:
+              'Data kelompok Anda telah terverifikasi dan tercatat resmi di Google Spreadsheet.',
+            booking: confirmedBooking,
+          });
+
+          // Clean query params so refresh doesn't re-trigger
+          const cleanUrl =
+            window.location.pathname +
+            (confirmedBooking.formId ? `?form=${confirmedBooking.formId}` : '');
+          window.history.replaceState({}, document.title, cleanUrl);
+
+          // Reload slots
+          loadPublicSlots(
+            confirmedBooking.formId,
+            confirmedBooking.sheetId,
+            confirmedBooking.sheetName
+          );
+        } catch (err: unknown) {
+          console.error('Error confirming email link:', err);
+          setEmailConfirmModal({
+            isOpen: true,
+            status: 'error',
+            title: 'Terjadi Kesalahan',
+            message: err instanceof Error ? err.message : 'Gagal memproses verifikasi konfirmasi email.',
+            booking: null,
+          });
+        }
+      };
+
+      executeConfirmation();
+    }
+  }, [loadPublicSlots, accessToken]);
 
   // Auto-reconnect saved spreadsheet once admin is authenticated
   useEffect(() => {
@@ -779,6 +967,8 @@ export default function App() {
             formDescription={currentDescription}
             tabName={currentTabName}
             sheetUrl={config?.url}
+            sheetId={config?.id || activeFormItem?.sheetId || ''}
+            formId={activeFormItem?.id}
             onBookSlot={handlePublicBookSlot}
             onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
             isAdminLoggedIn={false}
@@ -1006,6 +1196,8 @@ export default function App() {
                   formDescription={currentDescription}
                   tabName={currentTabName}
                   sheetUrl={config.url}
+                  sheetId={config.id}
+                  formId={activeFormItem?.id}
                   onBookSlot={handleAdminRequestBooking}
                   onOpenAdminLogin={() => setActiveTab('manager')}
                   isAdminLoggedIn={true}
@@ -1079,6 +1271,130 @@ export default function App() {
         onConfirm={confirmationState.onConfirm}
         onCancel={() => setConfirmationState((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Email Link Confirmation Result Modal */}
+      {emailConfirmModal.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
+            {emailConfirmModal.status === 'verifying' && (
+              <div className="p-8 text-center space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+                  <Loader2 className="w-8 h-8 animate-spin" />
+                </div>
+                <div className="space-y-1">
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {emailConfirmModal.title || 'Memverifikasi Konfirmasi Booking...'}
+                  </h3>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                    {emailConfirmModal.message}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {emailConfirmModal.status === 'error' && (
+              <div className="p-8 text-center space-y-5">
+                <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+                  <XCircle className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {emailConfirmModal.title || 'Verifikasi Gagal'}
+                  </h3>
+                  <p className="text-xs sm:text-sm text-slate-600 max-w-sm mx-auto">
+                    {emailConfirmModal.message}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+                >
+                  Kembali ke Halaman Jadwal
+                </button>
+              </div>
+            )}
+
+            {emailConfirmModal.status === 'success' && emailConfirmModal.booking && (
+              <div>
+                <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-6 text-white text-center">
+                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
+                    <CheckCircle2 className="w-8 h-8 text-white" />
+                  </div>
+                  <h3 className="text-xl font-bold tracking-tight">
+                    {emailConfirmModal.title}
+                  </h3>
+                  <p className="text-emerald-100 text-xs mt-1">
+                    {emailConfirmModal.message}
+                  </p>
+                </div>
+
+                <div className="p-6 space-y-4">
+                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
+                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                      <span className="text-slate-500">Nomor Sesi</span>
+                      <span className="font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                        Urutan #{emailConfirmModal.booking.urutan} (Baris {emailConfirmModal.booking.rowNumber})
+                      </span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Hari & Tanggal:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.hari}, {emailConfirmModal.booking.tanggal}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Jam Presentasi:</span>
+                      <span className="font-semibold font-mono">{emailConfirmModal.booking.jam}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Kelas Teori:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.kelasTeori}</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Kelompok:</span>
+                      <span className="font-semibold">{emailConfirmModal.booking.namaKelompok} ({emailConfirmModal.booking.idKelompok})</span>
+                    </div>
+                    <div className="flex justify-between text-slate-700">
+                      <span>Tema Presentasi:</span>
+                      <span className="font-semibold max-w-xs text-right">{emailConfirmModal.booking.tema}</span>
+                    </div>
+                    {emailConfirmModal.booking.email && (
+                      <div className="flex justify-between text-slate-700">
+                        <span>Email Terverifikasi:</span>
+                        <span className="font-mono font-semibold text-emerald-700">{emailConfirmModal.booking.email}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="space-y-2 pt-2">
+                    <a
+                      href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                        `Presentasi: ${emailConfirmModal.booking.namaKelompok} (${emailConfirmModal.booking.idKelompok})`
+                      )}&details=${encodeURIComponent(
+                        `Jadwal Presentasi:\nUrutan: ${emailConfirmModal.booking.urutan}\nHari: ${emailConfirmModal.booking.hari}\nTanggal: ${emailConfirmModal.booking.tanggal}\nJam: ${emailConfirmModal.booking.jam}\nKelas: ${emailConfirmModal.booking.kelasTeori}\nTema: ${emailConfirmModal.booking.tema}\nEmail: ${emailConfirmModal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
+                      )}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                    >
+                      <CalendarPlus className="w-4 h-4" />
+                      <span>Simpan ke Google Calendar</span>
+                      <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                    </a>
+
+                    <button
+                      type="button"
+                      onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                      className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                    >
+                      Tutup & Lihat Jadwal
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

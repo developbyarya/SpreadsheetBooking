@@ -16,8 +16,19 @@ import {
   Loader2,
   Lock,
   ChevronDown,
+  Mail,
+  MailCheck,
+  Timer,
+  RefreshCw,
+  XCircle,
+  ShieldCheck,
 } from 'lucide-react';
 import { PresentationSlot, PresentationBookingPayload } from '../services/sheets';
+import {
+  isValidUpnInformatikaEmail,
+  createPendingBookingHold,
+  cancelBookingInFirestore,
+} from '../services/firebase';
 
 export const KELAS_TEORI_OPTIONS = ['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'];
 
@@ -27,6 +38,8 @@ interface StepBookingFormProps {
   formDescription?: string;
   tabName?: string;
   sheetUrl?: string;
+  sheetId?: string;
+  formId?: string;
   onBookSlot: (
     slot: PresentationSlot,
     payload: PresentationBookingPayload
@@ -35,27 +48,41 @@ interface StepBookingFormProps {
   isAdminLoggedIn?: boolean;
 }
 
+interface PendingHoldState {
+  bookingId: string;
+  confirmToken: string;
+  expiresAt: number;
+  previewUrl?: string;
+  email: string;
+  slot: PresentationSlot;
+  payload: PresentationBookingPayload;
+}
+
 export const StepBookingForm: React.FC<StepBookingFormProps> = ({
   slots,
   sheetTitle = 'Jadwal Presentasi',
   formDescription,
   tabName,
   sheetUrl,
+  sheetId,
+  formId,
   onBookSlot,
   onOpenAdminLogin,
   isAdminLoggedIn = false,
 }) => {
   // Current Step:
   // 1 = Pilih Waktu & Jam
-  // 2 = Kelas Teori
-  // 3 = ID_Kelompok
-  // 4 = Nama Kelompok
-  // 5 = Tema
-  // 6 = Review & Konfirmasi
+  // 2 = Email Mahasiswa (Informatika UPN)
+  // 3 = Kelas Teori
+  // 4 = ID_Kelompok
+  // 5 = Nama Kelompok
+  // 6 = Tema
+  // 7 = Review & Kirim Konfirmasi Email
   const [currentStep, setCurrentStep] = useState<number>(1);
 
   // Form State
   const [selectedSlot, setSelectedSlot] = useState<PresentationSlot | null>(null);
+  const [studentEmail, setStudentEmail] = useState('');
   const [kelasTeori, setKelasTeori] = useState('');
   const [idKelompok, setIdKelompok] = useState('');
   const [namaKelompok, setNamaKelompok] = useState('');
@@ -64,35 +91,73 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
   // Filtering for Step 1
   const [selectedHariFilter, setSelectedHariFilter] = useState<string>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isResending, setIsResending] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Email Hold & Verification State (15 minutes hold)
+  const [pendingHold, setPendingHold] = useState<PendingHoldState | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(15 * 60);
+
+  // Booking confirmed success screen (if confirmed in this tab)
   const [bookingSuccess, setBookingSuccess] = useState<{
     slot: PresentationSlot;
     payload: PresentationBookingPayload;
   } | null>(null);
 
+  // Countdown timer for pending hold
+  useEffect(() => {
+    if (!pendingHold) return;
+
+    const updateTimer = () => {
+      const now = Date.now();
+      const diff = Math.max(0, Math.floor((pendingHold.expiresAt - now) / 1000));
+      setRemainingSeconds(diff);
+      if (diff <= 0) {
+        setErrorMsg('Masa penahanan slot (15 menit) telah kedaluwarsa. Slot telah dilepaskan kembali.');
+        setPendingHold(null);
+      }
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [pendingHold]);
+
   // Auto-focus input on step change
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
-    if (currentStep >= 2 && currentStep <= 5) {
+    if (currentStep >= 2 && currentStep <= 6) {
       setTimeout(() => {
         inputRef.current?.focus();
       }, 100);
     }
   }, [currentStep]);
 
-  // Only open / available slots
+  // Available slots (not booked and not held by another user)
   const availableSlots = useMemo(() => {
-    return slots.filter((s) => !s.isBooked);
+    const now = Date.now();
+    return slots.filter((s) => {
+      if (s.isHeld && s.heldExpiresAt && s.heldExpiresAt > now) {
+        return false;
+      }
+      return !s.isBooked;
+    });
+  }, [slots]);
+
+  // Held slots count
+  const heldSlotsCount = useMemo(() => {
+    const now = Date.now();
+    return slots.filter((s) => s.isHeld && s.heldExpiresAt && s.heldExpiresAt > now).length;
   }, [slots]);
 
   // Unique days of week
   const uniqueHari = useMemo(() => {
     const set = new Set<string>();
-    availableSlots.forEach((s) => {
+    slots.forEach((s) => {
       if (s.hari) set.add(s.hari);
     });
     return Array.from(set);
-  }, [availableSlots]);
+  }, [slots]);
 
   // Filtered available slots
   const filteredSlots = useMemo(() => {
@@ -102,14 +167,15 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
     );
   }, [availableSlots, selectedHariFilter]);
 
-  // Step names
+  // Step names (7 steps total)
   const stepTitles = [
     'Pilih Waktu',
+    'Email Mahasiswa',
     'Kelas Teori',
     'ID Kelompok',
     'Nama Kelompok',
     'Tema Presentasi',
-    'Konfirmasi',
+    'Review & Kirim',
   ];
 
   // Advance step with validation
@@ -122,29 +188,42 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       }
       setCurrentStep(2);
     } else if (currentStep === 2) {
-      if (!kelasTeori.trim()) {
-        setErrorMsg('Kelas Teori wajib diisi.');
+      const cleanEmail = studentEmail.trim().toLowerCase();
+      if (!cleanEmail) {
+        setErrorMsg('Email mahasiswa wajib diisi.');
+        return;
+      }
+      if (!isValidUpnInformatikaEmail(cleanEmail)) {
+        setErrorMsg(
+          'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 12324xxxx@student.upnyk.ac.id'
+        );
         return;
       }
       setCurrentStep(3);
     } else if (currentStep === 3) {
-      if (!idKelompok.trim()) {
-        setErrorMsg('ID_Kelompok wajib diisi.');
+      if (!kelasTeori.trim()) {
+        setErrorMsg('Kelas Teori wajib diisi.');
         return;
       }
       setCurrentStep(4);
     } else if (currentStep === 4) {
-      if (!namaKelompok.trim()) {
-        setErrorMsg('Nama Kelompok / Anggota wajib diisi.');
+      if (!idKelompok.trim()) {
+        setErrorMsg('ID_Kelompok wajib diisi.');
         return;
       }
       setCurrentStep(5);
     } else if (currentStep === 5) {
+      if (!namaKelompok.trim()) {
+        setErrorMsg('Nama Kelompok / Anggota wajib diisi.');
+        return;
+      }
+      setCurrentStep(6);
+    } else if (currentStep === 6) {
       if (!tema.trim()) {
         setErrorMsg('Tema / Topik presentasi wajib diisi.');
         return;
       }
-      setCurrentStep(6);
+      setCurrentStep(7);
     }
   };
 
@@ -155,24 +234,97 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
     }
   };
 
-  // Submit booking
-  const handleFinalSubmit = async (e: React.FormEvent) => {
+  // Send Confirmation Email and Hold the Slot for 15 minutes
+  const handleInitiateBookingWithEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedSlot) return;
+
+    const cleanEmail = studentEmail.trim().toLowerCase();
+    if (!isValidUpnInformatikaEmail(cleanEmail)) {
+      setErrorMsg(
+        'Format email salah! Gunakan email institusi UPN Informatika: 12324xxxx@student.upnyk.ac.id'
+      );
+      setCurrentStep(2);
+      return;
+    }
 
     const payload: PresentationBookingPayload = {
       kelasTeori: kelasTeori.trim(),
       idKelompok: idKelompok.trim(),
       namaKelompok: namaKelompok.trim(),
       tema: tema.trim(),
+      email: cleanEmail,
     };
 
     setIsSubmitting(true);
     setErrorMsg(null);
 
+    const effectiveSheetId = sheetId || 'spreadsheet_booking';
+    const effectiveSheetName = tabName || 'Sheet1';
+
     try {
-      await onBookSlot(selectedSlot, payload);
-      setBookingSuccess({
+      // 1. Create a 15-minute temporary pending hold in Firestore
+      const holdRes = await createPendingBookingHold({
+        sheetId: effectiveSheetId,
+        sheetName: effectiveSheetName,
+        formId: formId,
+        rowNumber: selectedSlot.rowNumber,
+        urutan: selectedSlot.urutan,
+        hari: selectedSlot.hari,
+        tanggal: selectedSlot.tanggal,
+        jam: selectedSlot.jam,
+        kelasTeori: payload.kelasTeori,
+        namaKelompok: payload.namaKelompok,
+        tema: payload.tema,
+        idKelompok: payload.idKelompok,
+        email: cleanEmail,
+        bookedByAdmin: false,
+      });
+
+      if (!holdRes.success || !holdRes.confirmToken) {
+        throw new Error(
+          holdRes.error || 'Gagal memesan slot sementara. Kemungkinan slot ini baru saja diambil orang lain.'
+        );
+      }
+
+      // 2. Send confirmation link via backend email service
+      const appUrl = window.location.origin;
+      const sendRes = await fetch('/api/send-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: cleanEmail,
+          bookingId: holdRes.bookingId,
+          confirmToken: holdRes.confirmToken,
+          slotDetails: {
+            hari: selectedSlot.hari,
+            tanggal: selectedSlot.tanggal,
+            jam: selectedSlot.jam,
+            urutan: selectedSlot.urutan,
+            kelasTeori: payload.kelasTeori,
+            namaKelompok: payload.namaKelompok,
+            idKelompok: payload.idKelompok,
+            tema: payload.tema,
+          },
+          appUrl,
+          formTitle: sheetTitle,
+        }),
+      });
+
+      const sendData = await sendRes.json().catch(() => ({}));
+
+      if (!sendRes.ok) {
+        console.warn('Backend email warning:', sendData);
+        // If email service has an issue, still inform user
+      }
+
+      // 3. Set hold state and start 15 min countdown view
+      setPendingHold({
+        bookingId: holdRes.bookingId,
+        confirmToken: holdRes.confirmToken,
+        expiresAt: holdRes.expiresAt || Date.now() + 15 * 60 * 1000,
+        previewUrl: sendData.previewUrl,
+        email: cleanEmail,
         slot: selectedSlot,
         payload,
       });
@@ -181,17 +333,83 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       setErrorMsg(
         err instanceof Error
           ? err.message
-          : 'Gagal memproses booking. Kemungkinan slot ini baru saja diambil kelompok lain. Coba pilih slot lain.'
+          : 'Terjadi kesalahan saat memproses booking. Silakan coba lagi.'
       );
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  // Resend confirmation email
+  const handleResendEmail = async () => {
+    if (!pendingHold) return;
+    setIsResending(true);
+    setErrorMsg(null);
+    try {
+      const appUrl = window.location.origin;
+      const sendRes = await fetch('/api/send-confirmation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: pendingHold.email,
+          bookingId: pendingHold.bookingId,
+          confirmToken: pendingHold.confirmToken,
+          slotDetails: {
+            hari: pendingHold.slot.hari,
+            tanggal: pendingHold.slot.tanggal,
+            jam: pendingHold.slot.jam,
+            urutan: pendingHold.slot.urutan,
+            kelasTeori: pendingHold.payload.kelasTeori,
+            namaKelompok: pendingHold.payload.namaKelompok,
+            idKelompok: pendingHold.payload.idKelompok,
+            tema: pendingHold.payload.tema,
+          },
+          appUrl,
+          formTitle: sheetTitle,
+        }),
+      });
+
+      const sendData = await sendRes.json().catch(() => ({}));
+      if (sendData.previewUrl) {
+        setPendingHold((prev) => (prev ? { ...prev, previewUrl: sendData.previewUrl } : null));
+      }
+      alert('Email konfirmasi telah dikirim ulang. Silakan periksa kotak masuk atau folder spam Anda.');
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('Gagal mengirim ulang email konfirmasi.');
+    } finally {
+      setIsResending(false);
+    }
+  };
+
+  // Cancel pending hold manually
+  const handleCancelHold = async () => {
+    if (!pendingHold) return;
+    if (confirm('Apakah Anda yakin ingin membatalkan pemesanan slot ini? Slot akan dilepaskan kembali.')) {
+      try {
+        const effectiveSheetId = sheetId || 'spreadsheet_booking';
+        const effectiveSheetName = tabName || 'Sheet1';
+        await cancelBookingInFirestore(effectiveSheetId, effectiveSheetName, pendingHold.slot.rowNumber);
+      } catch (e) {
+        console.warn('Cancel hold warning:', e);
+      }
+      setPendingHold(null);
+      setErrorMsg(null);
+      setCurrentStep(1);
+    }
+  };
+
+  // Format seconds to MM:SS
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Google Calendar URL
   const getGoogleCalendarUrl = (slot: PresentationSlot, payload: PresentationBookingPayload) => {
     const title = `Presentasi: ${payload.namaKelompok} (${payload.idKelompok})`;
-    const details = `Jadwal Presentasi:\nUrutan: ${slot.urutan}\nHari: ${slot.hari}\nTanggal: ${slot.tanggal}\nJam: ${slot.jam}\nKelas: ${payload.kelasTeori}\nTema: ${payload.tema}\n\nTercatat di Google Spreadsheet.`;
+    const details = `Jadwal Presentasi:\nUrutan: ${slot.urutan}\nHari: ${slot.hari}\nTanggal: ${slot.tanggal}\nJam: ${slot.jam}\nKelas: ${payload.kelasTeori}\nTema: ${payload.tema}\nEmail: ${payload.email || '-'}\n\nTercatat di Google Spreadsheet.`;
     const params = new URLSearchParams({
       action: 'TEMPLATE',
       text: title,
@@ -227,12 +445,14 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
   const handleResetForm = () => {
     setSelectedSlot(null);
+    setStudentEmail('');
     setKelasTeori('');
     setIdKelompok('');
     setNamaKelompok('');
     setTema('');
     setCurrentStep(1);
     setBookingSuccess(null);
+    setPendingHold(null);
   };
 
   return (
@@ -251,7 +471,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             )}
           </div>
           <p className="text-xs text-slate-500">
-            {formDescription || 'Pilih slot waktu dan lengkapi data kelompok Anda • Tanpa perlu login'}
+            {formDescription || 'Verifikasi Email Institusi Informatika UPN • Slot ditahan 15 menit'}
           </p>
         </div>
 
@@ -266,16 +486,16 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         </button>
       </div>
 
-      {/* SUCCESS SCREEN */}
+      {/* VIEW 1: SUCCESS CONFIRMED SCREEN */}
       {bookingSuccess ? (
         <div className="max-w-xl w-full mx-auto my-8 bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200">
           <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-8 text-white text-center">
             <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-xs">
               <CheckCircle2 className="w-10 h-10 text-white" />
             </div>
-            <h2 className="text-2xl font-bold tracking-tight">Booking Berhasil Dicatat!</h2>
+            <h2 className="text-2xl font-bold tracking-tight">Booking Berhasil Dikonfirmasi!</h2>
             <p className="text-emerald-100 text-sm mt-1">
-              Data kelompok Anda telah tersimpan langsung di Google Spreadsheet.
+              Data kelompok Anda telah terverifikasi dan tersimpan langsung di Google Spreadsheet.
             </p>
           </div>
 
@@ -322,6 +542,16 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
               </div>
 
               <div className="flex items-center gap-3 pt-2 border-t border-slate-200/60">
+                <Mail className="w-5 h-5 text-emerald-600" />
+                <div>
+                  <p className="text-xs text-slate-500 font-medium">Email Mahasiswa</p>
+                  <p className="text-sm font-semibold text-slate-800 font-mono">
+                    {bookingSuccess.payload.email}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2 border-t border-slate-200/60">
                 <Sparkles className="w-5 h-5 text-emerald-600" />
                 <div>
                   <p className="text-xs text-slate-500 font-medium">Tema Presentasi</p>
@@ -363,14 +593,121 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </button>
           </div>
         </div>
+      ) : pendingHold ? (
+        /* VIEW 2: PENDING HOLD & WAITING FOR EMAIL CONFIRMATION (15-MIN COUNTDOWN) */
+        <div className="max-w-xl w-full mx-auto my-8 bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden animate-in zoom-in-95 duration-200">
+          <div className="bg-gradient-to-br from-amber-500 via-orange-600 to-amber-700 p-8 text-white text-center relative overflow-hidden">
+            <div className="w-16 h-16 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-4 backdrop-blur-xs">
+              <MailCheck className="w-10 h-10 text-white" />
+            </div>
+            <h2 className="text-2xl font-bold tracking-tight">Cek Email Anda!</h2>
+            <p className="text-amber-100 text-sm mt-1 max-w-sm mx-auto">
+              Link konfirmasi booking telah dikirim ke alamat email institusi Anda.
+            </p>
+
+            {/* Countdown Badge */}
+            <div className="mt-5 inline-flex items-center gap-2 bg-black/25 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/20 text-white font-mono text-lg font-bold">
+              <Timer className="w-5 h-5 text-amber-200 animate-pulse" />
+              <span>Sisa Waktu Hold: {formatTime(remainingSeconds)}</span>
+            </div>
+          </div>
+
+          <div className="p-8 space-y-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-xs text-amber-900 space-y-2">
+              <div className="font-bold flex items-center gap-1.5 text-amber-950">
+                <ShieldCheck className="w-4 h-4 text-amber-600" />
+                <span>Slot Ditahan Sementara Selama 15 Menit</span>
+              </div>
+              <p>
+                Untuk melindungi Anda dari duplikasi booking, slot ini <strong>telah kami kunci sementara</strong> agar tidak diambil kelompok lain.
+              </p>
+              <p className="font-medium text-amber-900">
+                ⚠️ Data <strong>TIDAK AKAN TERSIMPAN</strong> di Google Spreadsheet jika Anda tidak mengklik link verifikasi di email sebelum waktu habis.
+              </p>
+            </div>
+
+            {/* Target Email Box */}
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+              <p className="text-xs text-slate-500">Email Tujuan:</p>
+              <p className="text-base font-bold font-mono text-slate-800 break-all mt-0.5">
+                {pendingHold.email}
+              </p>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Silakan periksa folder <strong>Inbox</strong> atau folder <strong>Spam / Junk</strong> Anda.
+              </p>
+            </div>
+
+            {/* Slot Details Summary */}
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
+              <div className="flex justify-between text-slate-600">
+                <span>Waktu Presentasi:</span>
+                <span className="font-semibold text-slate-900 font-mono">
+                  {pendingHold.slot.hari}, {pendingHold.slot.tanggal} ({pendingHold.slot.jam})
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Kelompok:</span>
+                <span className="font-semibold text-slate-900">
+                  {pendingHold.payload.namaKelompok} ({pendingHold.payload.idKelompok})
+                </span>
+              </div>
+              <div className="flex justify-between text-slate-600">
+                <span>Kelas Teori:</span>
+                <span className="font-semibold text-slate-900">
+                  {pendingHold.payload.kelasTeori}
+                </span>
+              </div>
+            </div>
+
+            {/* Development / Ethereal Email Preview link if available */}
+            {pendingHold.previewUrl && (
+              <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-center">
+                <span className="text-xs text-blue-700 font-semibold block mb-1">
+                  [Mode Pengujian / Dev Mailer]
+                </span>
+                <a
+                  href={pendingHold.previewUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-blue-600 hover:text-blue-800 underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Buka Email Simulasi (Ethereal Preview)</span>
+                </a>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="space-y-3 pt-2">
+              <button
+                type="button"
+                onClick={handleResendEmail}
+                disabled={isResending}
+                className="w-full flex items-center justify-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 transition-colors disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isResending ? 'animate-spin' : ''}`} />
+                <span>{isResending ? 'Mengirim Ulang...' : 'Kirim Ulang Email Konfirmasi'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleCancelHold}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-xs text-slate-500 hover:text-rose-600 transition-colors"
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Batalkan Penahanan Slot & Pilih Ulang</span>
+              </button>
+            </div>
+          </div>
+        </div>
       ) : (
-        /* PROGRESSIVE STEP CONTAINER */
+        /* VIEW 3: PROGRESSIVE MULTI-STEP FORM (7 STEPS) */
         <div className="max-w-2xl w-full mx-auto my-auto py-6">
           {/* Progress Bar & Step Tracker */}
           <div className="mb-8 space-y-2">
             <div className="flex items-center justify-between text-xs font-semibold text-slate-600">
               <span className="text-emerald-700 font-bold uppercase tracking-wider text-[11px]">
-                Langkah {currentStep} dari 5
+                Langkah {currentStep} dari 7
               </span>
               <span>{stepTitles[currentStep - 1]}</span>
             </div>
@@ -378,7 +715,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             <div className="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-emerald-500 to-teal-600 rounded-full transition-all duration-300 ease-out"
-                style={{ width: `${(currentStep / 5) * 100}%` }}
+                style={{ width: `${(currentStep / 7) * 100}%` }}
               />
             </div>
           </div>
@@ -400,6 +737,11 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500">
                   Pilih salah satu slot waktu yang masih tersedia di bawah ini.
+                  {heldSlotsCount > 0 && (
+                    <span className="ml-1 text-amber-600 font-medium">
+                      ({heldSlotsCount} slot sedang dalam hold sementara konfirmasi email).
+                    </span>
+                  )}
                 </p>
               </div>
 
@@ -438,7 +780,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
               <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
                 {filteredSlots.length === 0 ? (
                   <div className="p-10 text-center bg-white rounded-3xl border border-slate-200 text-slate-400 text-sm">
-                    Semua slot pada hari ini telah terisi. Silakan pilih hari lain.
+                    Semua slot pada hari ini telah terisi atau sedang di-hold. Silakan pilih hari lain.
                   </div>
                 ) : (
                   filteredSlots.map((slot) => {
@@ -494,6 +836,75 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   disabled={!selectedSlot}
                   className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-2xl text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 transition-all shadow-md disabled:opacity-50 disabled:cursor-not-allowed"
                 >
+                  <span>Lanjut: Email Mahasiswa</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* STEP 2: EMAIL MAHASISWA INFORMATIKA UPN */}
+          {currentStep === 2 && (
+            <div className="space-y-6 animate-in fade-in duration-200">
+              <div className="space-y-1 text-center sm:text-left">
+                <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
+                  Verifikasi Identitas Mahasiswa
+                </span>
+                <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+                  Masukkan Email Institusi Anda
+                </h1>
+                <p className="text-xs sm:text-sm text-slate-500">
+                  Wajib menggunakan email institusi Jurusan Informatika UPN Veteran Yogyakarta:
+                  <strong className="text-emerald-700 ml-1">12324xxxx@student.upnyk.ac.id</strong>
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                    <Mail className="w-5 h-5" />
+                  </div>
+                  <input
+                    ref={inputRef}
+                    type="email"
+                    required
+                    placeholder="123240001@student.upnyk.ac.id"
+                    value={studentEmail}
+                    onChange={(e) => {
+                      setStudentEmail(e.target.value);
+                      setErrorMsg(null);
+                    }}
+                    onKeyDown={(e) => e.key === 'Enter' && handleNext()}
+                    className="w-full pl-12 pr-5 py-4 text-base sm:text-lg bg-white border-2 border-slate-200 rounded-2xl focus:outline-none focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 shadow-xs transition-all font-mono"
+                  />
+                </div>
+
+                <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1">
+                  <p className="font-semibold">Format Alamat Email:</p>
+                  <p>
+                    • <strong>123</strong> = Program Studi Informatika <br />
+                    • <strong>24</strong> = Angkatan 2024 <br />
+                    • <strong>xxxx</strong> = 4 digit nomor urut mahasiswa <br />
+                    • Domain: <strong>@student.upnyk.ac.id</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-4">
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 text-xs sm:text-sm font-semibold text-slate-600 hover:text-slate-900"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>Kembali</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  disabled={!studentEmail}
+                  className="inline-flex items-center gap-2 px-6 py-3 text-sm font-semibold rounded-2xl text-white bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md"
+                >
                   <span>Lanjut: Kelas Teori</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
@@ -501,12 +912,12 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </div>
           )}
 
-          {/* STEP 2: KELAS TEORI */}
-          {currentStep === 2 && (
+          {/* STEP 3: KELAS TEORI */}
+          {currentStep === 3 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Field 1 / 4
+                  Field 2 / 5
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Pilih Kelas Teori Anda
@@ -588,12 +999,12 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </div>
           )}
 
-          {/* STEP 3: ID_KELOMPOK */}
-          {currentStep === 3 && (
+          {/* STEP 4: ID_KELOMPOK */}
+          {currentStep === 4 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Field 2 / 4
+                  Field 3 / 5
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Masukkan ID_Kelompok Anda
@@ -637,12 +1048,12 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </div>
           )}
 
-          {/* STEP 4: NAMA KELOMPOK */}
-          {currentStep === 4 && (
+          {/* STEP 5: NAMA KELOMPOK */}
+          {currentStep === 5 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Field 3 / 4
+                  Field 4 / 5
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Nama Kelompok / Anggota
@@ -686,12 +1097,12 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </div>
           )}
 
-          {/* STEP 5: TEMA */}
-          {currentStep === 5 && (
+          {/* STEP 6: TEMA */}
+          {currentStep === 6 && (
             <div className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
                 <span className="text-xs font-bold text-emerald-600 uppercase tracking-wider">
-                  Field 4 / 4
+                  Field 5 / 5
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Tema / Topik Presentasi
@@ -735,15 +1146,15 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             </div>
           )}
 
-          {/* STEP 6: REVIEW & KONFIRMASI */}
-          {currentStep === 6 && (
-            <form onSubmit={handleFinalSubmit} className="space-y-6 animate-in fade-in duration-200">
+          {/* STEP 7: REVIEW & KIRIM VERIFIKASI EMAIL */}
+          {currentStep === 7 && (
+            <form onSubmit={handleInitiateBookingWithEmail} className="space-y-6 animate-in fade-in duration-200">
               <div className="space-y-1 text-center sm:text-left">
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
                   Periksa Kembali Data Booking
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500">
-                  Pastikan informasi berikut sudah tepat sebelum disimpan ke Google Spreadsheet.
+                  Link konfirmasi akan dikirim ke email institusi Anda. Slot akan di-hold selama 15 menit.
                 </p>
               </div>
 
@@ -773,6 +1184,11 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
                 <div className="divide-y divide-slate-100 text-sm space-y-3 pt-1">
                   <div className="flex justify-between items-center pt-2">
+                    <span className="text-slate-500 font-medium">Email Mahasiswa:</span>
+                    <span className="font-bold font-mono text-emerald-800">{studentEmail}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center pt-2">
                     <span className="text-slate-500 font-medium">Kelas Teori:</span>
                     <span className="font-bold text-slate-900">{kelasTeori}</span>
                   </div>
@@ -791,6 +1207,10 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                     <span className="text-slate-500 font-medium">Tema Presentasi:</span>
                     <span className="font-bold text-slate-900 text-right max-w-xs">{tema}</span>
                   </div>
+                </div>
+
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+                  ℹ️ <strong>Catatan:</strong> Data <strong>belum</strong> disimpan ke spreadsheet. Setelah Anda menekan tombol di bawah, slot akan ditahan selama <strong>15 menit</strong> dan link konfirmasi dikirim ke email Anda.
                 </div>
               </div>
 
@@ -811,12 +1231,12 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   {isSubmitting ? (
                     <>
                       <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Menyimpan ke Spreadsheet...</span>
+                      <span>Mengunci Slot & Mengirim Email...</span>
                     </>
                   ) : (
                     <>
-                      <CheckCircle2 className="w-4 h-4" />
-                      <span>Konfirmasi & Simpan Booking</span>
+                      <Mail className="w-4 h-4" />
+                      <span>Kirim Link Konfirmasi ke Email</span>
                     </>
                   )}
                 </button>
@@ -828,7 +1248,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
       {/* Footer Info */}
       <div className="text-center text-xs text-slate-400 pt-6">
-        <span>Sistem Booking Jadwal Presentasi • Terhubung langsung dengan Google Sheets</span>
+        <span>Sistem Booking Jadwal Presentasi • Verifikasi Email Mahasiswa Informatika UPN</span>
       </div>
     </div>
   );
