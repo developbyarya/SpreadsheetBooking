@@ -180,10 +180,10 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
               type="button"
               onClick={onOpenFormManager}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-purple-900 bg-purple-50 border border-purple-200 hover:bg-purple-100 rounded-xl transition-colors shadow-2xs"
-              title="Buat beberapa link form untuk sheet/tab yang berbeda (Sheet 1, Sheet 2, dll)"
+              title="Atur link form per tab, deadline penutupan (WIB), dan switch buka/tutup form"
             >
               <Layers className="w-3.5 h-3.5 text-purple-600" />
-              <span>Kelola Link Tab Form</span>
+              <span>Kelola Link & Batas Waktu</span>
             </button>
           )}
 

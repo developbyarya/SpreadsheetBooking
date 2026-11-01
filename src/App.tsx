@@ -48,8 +48,10 @@ import { SpreadsheetPicker } from './components/SpreadsheetPicker';
 import { ShareLinkModal } from './components/ShareLinkModal';
 import { FormManagerModal } from './components/FormManagerModal';
 import { StepBookingForm } from './components/StepBookingForm';
+import { FormClosedView } from './components/FormClosedView';
 import { BookingView } from './components/BookingView';
 import { ManagerView } from './components/ManagerView';
+import { isFormClosed, formatWIB } from './services/dateTime';
 import {
   FileSpreadsheet,
   PlusCircle,
@@ -766,6 +768,16 @@ export default function App() {
     slot: PresentationSlot,
     payload: PresentationBookingPayload
   ): Promise<void> => {
+    // Check if form is currently closed / past deadline
+    const formClosedCheck = isFormClosed(activeFormItem);
+    if (formClosedCheck.isClosed) {
+      throw new Error(
+        activeFormItem?.closedMessage ||
+        formClosedCheck.reason ||
+        'Pendaftaran jadwal presentasi telah ditutup.'
+      );
+    }
+
     const params = new URLSearchParams(window.location.search);
     const formSlug = params.get('form') || activeFormItem?.id || undefined;
     const effectiveSheetId = activeFormItem?.sheetId || config?.id || '';
@@ -1007,6 +1019,18 @@ export default function App() {
               </button>
             </div>
           </div>
+        ) : isFormClosed(activeFormItem).isClosed ? (
+          /* Form Closed View (Past deadline or manually closed) */
+          <FormClosedView
+            sheetTitle={currentTitle}
+            tabName={currentTabName}
+            closedAt={activeFormItem?.closedAt}
+            openAt={activeFormItem?.openAt}
+            isClosedManually={activeFormItem?.isClosed}
+            closedMessage={activeFormItem?.closedMessage}
+            status={isFormClosed(activeFormItem).status}
+            onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
+          />
         ) : (
           /* Progressive One Field Per Page Form */
           <StepBookingForm
@@ -1018,6 +1042,8 @@ export default function App() {
             sheetId={config?.id || activeFormItem?.sheetId || ''}
             formId={activeFormItem?.id}
             emailBypass={emailBypass}
+            closedAt={activeFormItem?.closedAt}
+            isClosed={activeFormItem?.isClosed}
             onBookSlot={handlePublicBookSlot}
             onOpenAdminLogin={() => setIsAdminLoginModalOpen(true)}
             isAdminLoggedIn={false}
@@ -1248,6 +1274,8 @@ export default function App() {
                   sheetId={config.id}
                   formId={activeFormItem?.id}
                   emailBypass={emailBypass}
+                  closedAt={activeFormItem?.closedAt}
+                  isClosed={activeFormItem?.isClosed}
                   onBookSlot={handleAdminRequestBooking}
                   onOpenAdminLogin={() => setActiveTab('manager')}
                   isAdminLoggedIn={true}

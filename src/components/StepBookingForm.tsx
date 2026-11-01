@@ -29,6 +29,7 @@ import {
   createPendingBookingHold,
   cancelBookingInFirestore,
 } from '../services/firebase';
+import { formatWIB, formatCountdown } from '../services/dateTime';
 
 export const KELAS_TEORI_OPTIONS = ['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'];
 
@@ -41,6 +42,8 @@ interface StepBookingFormProps {
   sheetId?: string;
   formId?: string;
   emailBypass?: boolean;
+  closedAt?: number | null;
+  isClosed?: boolean;
   onBookSlot: (
     slot: PresentationSlot,
     payload: PresentationBookingPayload
@@ -68,6 +71,8 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
   sheetId,
   formId,
   emailBypass = false,
+  closedAt,
+  isClosed = false,
   onBookSlot,
   onOpenAdminLogin,
   isAdminLoggedIn = false,
@@ -517,6 +522,21 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
           <span>{isAdminLoggedIn ? 'Panel Admin' : 'Login Admin / Dosen'}</span>
         </button>
       </div>
+
+      {/* Deadline Info Banner if configured */}
+      {closedAt && Date.now() < closedAt && !bookingSuccess && !pendingHold && (
+        <div className="max-w-3xl w-full mx-auto my-3 p-3.5 bg-gradient-to-r from-amber-50 via-orange-50 to-amber-50 border border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs text-amber-950 shadow-2xs animate-in fade-in">
+          <div className="flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-600 shrink-0 animate-pulse" />
+            <span>
+              <strong>Batas Waktu Pendaftaran:</strong> {formatWIB(closedAt)}
+            </span>
+          </div>
+          <span className="font-semibold text-amber-900 bg-amber-100/90 border border-amber-300/80 px-2.5 py-0.5 rounded-full text-[11px] font-mono shrink-0">
+            Sisa Waktu: {formatCountdown(closedAt)}
+          </span>
+        </div>
+      )}
 
       {/* VIEW 1: SUCCESS CONFIRMED SCREEN */}
       {bookingSuccess ? (

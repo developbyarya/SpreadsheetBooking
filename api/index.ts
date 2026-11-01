@@ -12,6 +12,10 @@ export interface FormItem {
   sheetName: string; // Target sheet tab, e.g. "Sheet1", "Sheet2", "Kelas A"
   startRow: number; // Row number where schedule starts (default: 54)
   createdAt: number;
+  closedAt?: number | null; // Deadline timestamp in ms (e.g. 3 Nov 07:00 WIB)
+  openAt?: number | null; // Scheduled open timestamp in ms (optional)
+  isClosed?: boolean; // Manual immediate close toggle
+  closedMessage?: string; // Custom message displayed when form is closed
 }
 
 // In-memory multi-form registry
@@ -65,6 +69,10 @@ async function syncFormsFromFirestore(): Promise<void> {
       const description = f.description?.stringValue || '';
       const startRow = Number(f.startRow?.integerValue || f.startRow?.stringValue) || 54;
       const createdAt = Number(f.createdAt?.integerValue || f.createdAt?.stringValue) || Date.now();
+      const closedAt = f.closedAt?.integerValue ? Number(f.closedAt.integerValue) : f.closedAt?.stringValue ? Number(f.closedAt.stringValue) : null;
+      const openAt = f.openAt?.integerValue ? Number(f.openAt.integerValue) : f.openAt?.stringValue ? Number(f.openAt.stringValue) : null;
+      const isClosed = f.isClosed?.booleanValue === true;
+      const closedMessage = f.closedMessage?.stringValue || '';
 
       if (sheetId) {
         formsMap.set(id, {
@@ -75,6 +83,10 @@ async function syncFormsFromFirestore(): Promise<void> {
           sheetName,
           startRow,
           createdAt,
+          closedAt,
+          openAt,
+          isClosed,
+          closedMessage,
         });
       }
     }
@@ -253,7 +265,7 @@ app.get('/api/forms', async (_req: Request, res: Response) => {
 
 // Create or update a form link
 app.post('/api/forms', (req: Request, res: Response) => {
-  const { id, title, description, sheetId, sheetName, startRow } = req.body;
+  const { id, title, description, sheetId, sheetName, startRow, closedAt, openAt, isClosed, closedMessage } = req.body;
 
   if (!title || !sheetId || !sheetName) {
     res.status(400).json({ error: 'Title, sheetId, and sheetName are required' });
@@ -273,6 +285,10 @@ app.post('/api/forms', (req: Request, res: Response) => {
     sheetName: sheetName.trim(),
     startRow: Number(startRow) || 54,
     createdAt: Date.now(),
+    closedAt: typeof closedAt === 'number' ? closedAt : null,
+    openAt: typeof openAt === 'number' ? openAt : null,
+    isClosed: isClosed === true,
+    closedMessage: (closedMessage || '').trim(),
   };
 
   formsMap.set(slug, formItem);
@@ -406,9 +422,16 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
       }
     }
 
+    const now = Date.now();
+    const isPastDeadline = Boolean(targetForm.closedAt && now >= targetForm.closedAt);
+    const isUpcoming = Boolean(targetForm.openAt && now < targetForm.openAt);
+    const isFormCurrentlyClosed = targetForm.isClosed === true || isPastDeadline || isUpcoming;
+
     res.json({
       slots,
       emailBypass: isEmailBypassEnabled(),
+      isClosed: isFormCurrentlyClosed,
+      closedStatus: targetForm.isClosed ? 'manual' : isPastDeadline ? 'deadline' : isUpcoming ? 'upcoming' : 'open',
       form: {
         id: currentFormId,
         title,
@@ -416,6 +439,10 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
         sheetId,
         sheetName,
         startRow,
+        closedAt: targetForm.closedAt || null,
+        openAt: targetForm.openAt || null,
+        isClosed: targetForm.isClosed === true,
+        closedMessage: targetForm.closedMessage || '',
       },
     });
   } catch (error: unknown) {
@@ -437,10 +464,29 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
     let targetSheetId = bodySheetId;
     let targetSheetName = bodySheetName;
 
-    if (formId && formsMap.has(formId)) {
-      const f = formsMap.get(formId)!;
-      targetSheetId = f.sheetId;
-      targetSheetName = f.sheetName;
+    const formToCheck = (formId && formsMap.has(formId))
+      ? formsMap.get(formId)
+      : Array.from(formsMap.values()).find((f) => f.sheetId === bodySheetId);
+
+    if (formToCheck) {
+      targetSheetId = formToCheck.sheetId;
+      targetSheetName = formToCheck.sheetName;
+
+      const now = Date.now();
+      if (formToCheck.isClosed || (formToCheck.closedAt && now >= formToCheck.closedAt)) {
+        res.status(403).json({
+          error: formToCheck.closedMessage || 'Pendaftaran jadwal presentasi telah ditutup.',
+          isClosed: true,
+        });
+        return;
+      }
+      if (formToCheck.openAt && now < formToCheck.openAt) {
+        res.status(403).json({
+          error: 'Pendaftaran jadwal presentasi belum dibuka.',
+          isClosed: true,
+        });
+        return;
+      }
     }
 
     if (!targetSheetId || !targetSheetName) {
@@ -530,6 +576,27 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
 
     const baseUrl = appUrl || process.env.APP_URL || 'https://spreadsheet-booking.vercel.app';
     const confirmationLink = `${baseUrl.replace(/\/+$/, '')}/?action=confirm&bookingId=${encodeURIComponent(bookingId)}&token=${encodeURIComponent(confirmToken)}`;
+
+    // Check if form is currently closed or past deadline
+    const { formId } = req.body;
+    if (formId && formsMap.has(formId)) {
+      const formToCheck = formsMap.get(formId)!;
+      const now = Date.now();
+      if (formToCheck.isClosed || (formToCheck.closedAt && now >= formToCheck.closedAt)) {
+        res.status(403).json({
+          error: formToCheck.closedMessage || 'Pendaftaran jadwal presentasi telah ditutup.',
+          isClosed: true,
+        });
+        return;
+      }
+      if (formToCheck.openAt && now < formToCheck.openAt) {
+        res.status(403).json({
+          error: 'Pendaftaran jadwal presentasi belum dibuka.',
+          isClosed: true,
+        });
+        return;
+      }
+    }
 
     // EMAIL_BYPASS Mode: Bypass actual email sending and signal client that confirmation is immediate
     if (isEmailBypassEnabled()) {

@@ -43,6 +43,10 @@ export interface CustomForm {
   sheetName: string; // Target sheet tab, e.g. "Sheet1", "Sheet2", "Kelas A"
   startRow: number; // Row number where schedule starts (default: 54)
   createdAt: number;
+  closedAt?: number | null; // Deadline timestamp in ms (e.g. 3 Nov 07:00 WIB)
+  openAt?: number | null; // Scheduled open timestamp in ms (optional)
+  isClosed?: boolean; // Manual immediate close toggle
+  closedMessage?: string; // Custom message displayed when form is closed
 }
 
 export interface SpreadsheetConfig {

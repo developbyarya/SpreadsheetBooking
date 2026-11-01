@@ -177,10 +177,10 @@ export const Header: React.FC<HeaderProps> = ({
                     type="button"
                     onClick={onOpenFormManager}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition-colors shadow-2xs"
-                    title="Kelola Banyak Link Form untuk Berbagai Tab Sheet (Sheet 1, Sheet 2, dll)"
+                    title="Kelola Link, Tab & Batas Waktu Form (WIB)"
                   >
                     <Layers className="w-3.5 h-3.5 text-purple-600" />
-                    <span className="hidden md:inline">Link Tab Form</span>
+                    <span className="hidden md:inline">Batas Waktu & Form</span>
                   </button>
                 )}
 
