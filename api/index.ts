@@ -185,8 +185,17 @@ function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presenta
 
 // Public configuration endpoint
 app.get('/api/config', (_req: Request, res: Response) => {
+  let saEmail: string | null = null;
+  const saKeyRaw = process.env.GOOGLE_SERVICE_ACCOUNT_KEY;
+  if (saKeyRaw) {
+    try {
+      const credentials = typeof saKeyRaw === 'string' ? JSON.parse(saKeyRaw.trim()) : saKeyRaw;
+      saEmail = credentials.client_email || null;
+    } catch {}
+  }
   res.json({
     emailBypass: isEmailBypassEnabled(),
+    serviceAccountEmail: saEmail,
   });
 });
 
@@ -562,8 +571,52 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
 
     if (!writeRes.ok) {
       const err = await writeRes.json().catch(() => ({}));
+      const rawMsg = err.error?.message || 'Gagal menyimpan booking ke spreadsheet';
+
+      // If Google Sheets rejects due to protected cells/ranges, attempt fallback using active owner token from Firestore
+      if (rawMsg.toLowerCase().includes('protected cell') || rawMsg.toLowerCase().includes('permission')) {
+        let fallbackToken: string | null = null;
+        if (targetSheetId) {
+          try {
+            const snap = await fetch(
+              `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/sessions/${targetSheetId}`
+            );
+            if (snap.ok) {
+              const data = await snap.json();
+              fallbackToken = data.fields?.accessToken?.stringValue || null;
+            }
+          } catch {}
+        }
+
+        if (fallbackToken && fallbackToken !== token) {
+          const fallbackRes = await fetch(updateUrl, {
+            method: 'PUT',
+            headers: {
+              Authorization: `Bearer ${fallbackToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ values }),
+          });
+
+          if (fallbackRes.ok) {
+            res.json({
+              success: true,
+              rowNumber,
+              message: 'Booking presentasi berhasil disimpan ke Google Sheet (via sesi owner)',
+            });
+            return;
+          }
+        }
+
+        res.status(400).json({
+          error: `Google Sheets menolak penulisan karena sel/sheet dilindungi (Protected Range). Pastikan kolom E:H tidak dikunci atau berikan izin edit ke Service Account robot. (${rawMsg})`,
+          isProtectedCell: true,
+        });
+        return;
+      }
+
       res.status(writeRes.status).json({
-        error: err.error?.message || 'Gagal menyimpan booking ke spreadsheet',
+        error: rawMsg,
       });
       return;
     }

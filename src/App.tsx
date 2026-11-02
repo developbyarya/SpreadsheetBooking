@@ -76,6 +76,247 @@ const STORAGE_KEY_SHEET_ID = 'slotsync_presentation_sheet_id';
 const STORAGE_KEY_START_ROW = 'slotsync_presentation_start_row';
 const STORAGE_KEY_FORMS = 'slotsync_custom_forms_list';
 
+interface EmailConfirmModalProps {
+  modal: {
+    isOpen: boolean;
+    status: 'verifying' | 'success' | 'already_confirmed' | 'error';
+    title?: string;
+    message?: string;
+    booking?: BookingRecord | null;
+  };
+  onClose: () => void;
+}
+
+function EmailConfirmModal({ modal, onClose }: EmailConfirmModalProps) {
+  if (!modal.isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+      <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
+        {modal.status === 'verifying' && (
+          <div className="p-8 text-center space-y-4">
+            <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
+              <Loader2 className="w-8 h-8 animate-spin" />
+            </div>
+            <div className="space-y-1">
+              <h3 className="text-xl font-bold text-slate-900">
+                {modal.title || 'Memverifikasi Konfirmasi Booking...'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                {modal.message}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {modal.status === 'error' && (
+          <div className="p-8 text-center space-y-5">
+            <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
+              <XCircle className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h3 className="text-xl font-bold text-slate-900">
+                {modal.title || 'Verifikasi Gagal'}
+              </h3>
+              <p className="text-xs sm:text-sm text-slate-600 max-w-sm mx-auto">
+                {modal.message}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 transition-colors"
+            >
+              Kembali ke Halaman Jadwal
+            </button>
+          </div>
+        )}
+
+        {/* Status: Sudah Dikonfirmasi Sebelumnya */}
+        {modal.status === 'already_confirmed' && modal.booking && (
+          <div>
+            <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-slate-800 p-6 text-white text-center">
+              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
+                <ShieldCheck className="w-8 h-8 text-white" />
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/20 text-white backdrop-blur-xs mb-2">
+                <span>✓ SUDAH DIKONFIRMASI</span>
+              </div>
+              <h3 className="text-xl font-bold tracking-tight">
+                {modal.title || 'Sudah Dikonfirmasi'}
+              </h3>
+              <p className="text-blue-100 text-xs mt-1 max-w-sm mx-auto">
+                {modal.message}
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 text-xs text-blue-900 flex items-center justify-between">
+                <span className="text-blue-700 font-medium">Status Verifikasi:</span>
+                <span className="font-semibold text-blue-950 flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
+                  Aktif & Resmi di Spreadsheet
+                </span>
+              </div>
+
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-slate-500">Nomor Sesi</span>
+                  <span className="font-mono font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                    Urutan #{modal.booking.urutan} (Baris {modal.booking.rowNumber})
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Hari & Tanggal:</span>
+                  <span className="font-semibold">{modal.booking.hari}, {modal.booking.tanggal}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Jam Presentasi:</span>
+                  <span className="font-semibold font-mono">{modal.booking.jam}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Kelas Teori:</span>
+                  <span className="font-semibold">{modal.booking.kelasTeori}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Kelompok:</span>
+                  <span className="font-semibold">{modal.booking.namaKelompok} ({modal.booking.idKelompok})</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Tema Presentasi:</span>
+                  <span className="font-semibold max-w-xs text-right">{modal.booking.tema}</span>
+                </div>
+                {modal.booking.email && (
+                  <div className="flex justify-between text-slate-700">
+                    <span>Email Terverifikasi:</span>
+                    <span className="font-mono font-semibold text-blue-700">{modal.booking.email}</span>
+                  </div>
+                )}
+                {modal.booking.confirmedAt && (
+                  <div className="flex justify-between text-slate-700 pt-1 border-t border-slate-200/60">
+                    <span>Waktu Konfirmasi:</span>
+                    <span className="font-medium text-slate-600">{formatWIB(modal.booking.confirmedAt)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <a
+                  href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                    `Presentasi: ${modal.booking.namaKelompok} (${modal.booking.idKelompok})`
+                  )}&details=${encodeURIComponent(
+                    `Jadwal Presentasi:\nUrutan: ${modal.booking.urutan}\nHari: ${modal.booking.hari}\nTanggal: ${modal.booking.tanggal}\nJam: ${modal.booking.jam}\nKelas: ${modal.booking.kelasTeori}\nTema: ${modal.booking.tema}\nEmail: ${modal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  <CalendarPlus className="w-4 h-4" />
+                  <span>Simpan ke Google Calendar</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                </a>
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                >
+                  Tutup & Lihat Jadwal
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Status: Baru Saja Berhasil Dikonfirmasi */}
+        {modal.status === 'success' && modal.booking && (
+          <div>
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-6 text-white text-center">
+              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
+                <CheckCircle2 className="w-8 h-8 text-white" />
+              </div>
+              <h3 className="text-xl font-bold tracking-tight">
+                {modal.title}
+              </h3>
+              <p className="text-emerald-100 text-xs mt-1">
+                {modal.message}
+              </p>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
+                <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
+                  <span className="text-slate-500">Nomor Sesi</span>
+                  <span className="font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                    Urutan #{modal.booking.urutan} (Baris {modal.booking.rowNumber})
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Hari & Tanggal:</span>
+                  <span className="font-semibold">{modal.booking.hari}, {modal.booking.tanggal}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Jam Presentasi:</span>
+                  <span className="font-semibold font-mono">{modal.booking.jam}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Kelas Teori:</span>
+                  <span className="font-semibold">{modal.booking.kelasTeori}</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Kelompok:</span>
+                  <span className="font-semibold">{modal.booking.namaKelompok} ({modal.booking.idKelompok})</span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Tema Presentasi:</span>
+                  <span className="font-semibold max-w-xs text-right">{modal.booking.tema}</span>
+                </div>
+                {modal.booking.email && (
+                  <div className="flex justify-between text-slate-700">
+                    <span>Email Terverifikasi:</span>
+                    <span className="font-mono font-semibold text-emerald-700">{modal.booking.email}</span>
+                  </div>
+                )}
+                {modal.booking.confirmedAt && (
+                  <div className="flex justify-between text-slate-700 pt-1 border-t border-slate-200/60">
+                    <span>Waktu Konfirmasi:</span>
+                    <span className="font-medium text-slate-600">{formatWIB(modal.booking.confirmedAt)}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2 pt-2">
+                <a
+                  href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
+                    `Presentasi: ${modal.booking.namaKelompok} (${modal.booking.idKelompok})`
+                  )}&details=${encodeURIComponent(
+                    `Jadwal Presentasi:\nUrutan: ${modal.booking.urutan}\nHari: ${modal.booking.hari}\nTanggal: ${modal.booking.tanggal}\nJam: ${modal.booking.jam}\nKelas: ${modal.booking.kelasTeori}\nTema: ${modal.booking.tema}\nEmail: ${modal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
+                >
+                  <CalendarPlus className="w-4 h-4" />
+                  <span>Simpan ke Google Calendar</span>
+                  <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                </a>
+
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
+                >
+                  Tutup & Lihat Jadwal
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   // Auth state (Admin / Owner only)
   const [user, setUser] = useState<User | null>(null);
@@ -555,9 +796,14 @@ export default function App() {
     const bookingId = params.get('bookingId');
     const token = params.get('token');
 
+    console.log('[EmailConfirm] params:', { action, bookingId, token });
     if (action === 'confirm' && bookingId && token) {
-      if (hasProcessedConfirmRef.current) return;
+      if (hasProcessedConfirmRef.current) {
+        console.log('[EmailConfirm] already processed, skipping ref');
+        return;
+      }
       hasProcessedConfirmRef.current = true;
+      console.log('[EmailConfirm] setting verifying modal');
 
       setEmailConfirmModal({
         isOpen: true,
@@ -570,8 +816,10 @@ export default function App() {
 
       const executeConfirmation = async () => {
         try {
+          console.log('[EmailConfirm] calling verifyAndConfirmBookingInFirestore');
           // 1. Verify and update booking status to 'confirmed' in Firestore
           const res = await verifyAndConfirmBookingInFirestore(bookingId, token);
+          console.log('[EmailConfirm] verifyAndConfirm result:', res);
           if (!res.success || !res.booking) {
             setEmailConfirmModal({
               isOpen: true,
@@ -589,6 +837,7 @@ export default function App() {
 
           // Case A: Link is clicked again and was ALREADY confirmed previously
           if (res.alreadyConfirmed) {
+            console.log('[EmailConfirm] already confirmed previously!');
             setEmailConfirmModal({
               isOpen: true,
               status: 'already_confirmed',
@@ -1151,6 +1400,12 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* Email Link Confirmation Result Modal for Public Visitor */}
+        <EmailConfirmModal
+          modal={emailConfirmModal}
+          onClose={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+        />
       </div>
     );
   }
@@ -1414,225 +1669,10 @@ export default function App() {
       />
 
       {/* Email Link Confirmation Result Modal */}
-      {emailConfirmModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-          <div className="w-full max-w-lg bg-white rounded-3xl shadow-2xl border border-slate-100 overflow-hidden animate-in zoom-in-95">
-            {emailConfirmModal.status === 'verifying' && (
-              <div className="p-8 text-center space-y-4">
-                <div className="w-16 h-16 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto">
-                  <Loader2 className="w-8 h-8 animate-spin" />
-                </div>
-                <div className="space-y-1">
-                  <h3 className="text-xl font-bold text-slate-900">
-                    {emailConfirmModal.title || 'Memverifikasi Konfirmasi Booking...'}
-                  </h3>
-                  <p className="text-xs text-slate-500 max-w-sm mx-auto">
-                    {emailConfirmModal.message}
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {emailConfirmModal.status === 'error' && (
-              <div className="p-8 text-center space-y-5">
-                <div className="w-16 h-16 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center mx-auto">
-                  <XCircle className="w-8 h-8" />
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-bold text-slate-900">
-                    {emailConfirmModal.title || 'Verifikasi Gagal'}
-                  </h3>
-                  <p className="text-xs sm:text-sm text-slate-600 max-w-sm mx-auto">
-                    {emailConfirmModal.message}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-                  className="w-full py-3 px-4 rounded-xl text-sm font-semibold bg-slate-900 text-white hover:bg-slate-800 transition-colors"
-                >
-                  Kembali ke Halaman Jadwal
-                </button>
-              </div>
-            )}
-
-            {/* Status: Sudah Dikonfirmasi Sebelumnya */}
-            {emailConfirmModal.status === 'already_confirmed' && emailConfirmModal.booking && (
-              <div>
-                <div className="bg-gradient-to-br from-blue-700 via-indigo-700 to-slate-800 p-6 text-white text-center">
-                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
-                    <ShieldCheck className="w-8 h-8 text-white" />
-                  </div>
-                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-white/20 text-white backdrop-blur-xs mb-2">
-                    <span>✓ SUDAH DIKONFIRMASI</span>
-                  </div>
-                  <h3 className="text-xl font-bold tracking-tight">
-                    {emailConfirmModal.title || 'Sudah Dikonfirmasi'}
-                  </h3>
-                  <p className="text-blue-100 text-xs mt-1 max-w-sm mx-auto">
-                    {emailConfirmModal.message}
-                  </p>
-                </div>
-
-                <div className="p-6 space-y-4">
-                  <div className="bg-blue-50/70 border border-blue-200/70 rounded-2xl p-3 text-xs text-blue-900 flex items-center justify-between">
-                    <span className="text-blue-700 font-medium">Status Verifikasi:</span>
-                    <span className="font-semibold text-blue-950 flex items-center gap-1">
-                      <span className="w-2 h-2 rounded-full bg-blue-600 inline-block animate-pulse"></span>
-                      Aktif & Resmi di Spreadsheet
-                    </span>
-                  </div>
-
-                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
-                      <span className="text-slate-500">Nomor Sesi</span>
-                      <span className="font-mono font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                        Urutan #{emailConfirmModal.booking.urutan} (Baris {emailConfirmModal.booking.rowNumber})
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Hari & Tanggal:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.hari}, {emailConfirmModal.booking.tanggal}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Jam Presentasi:</span>
-                      <span className="font-semibold font-mono">{emailConfirmModal.booking.jam}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Kelas Teori:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.kelasTeori}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Kelompok:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.namaKelompok} ({emailConfirmModal.booking.idKelompok})</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Tema Presentasi:</span>
-                      <span className="font-semibold max-w-xs text-right">{emailConfirmModal.booking.tema}</span>
-                    </div>
-                    {emailConfirmModal.booking.email && (
-                      <div className="flex justify-between text-slate-700">
-                        <span>Email Terverifikasi:</span>
-                        <span className="font-mono font-semibold text-blue-700">{emailConfirmModal.booking.email}</span>
-                      </div>
-                    )}
-                    {emailConfirmModal.booking.confirmedAt && (
-                      <div className="flex justify-between text-slate-700 pt-1 border-t border-slate-200/60">
-                        <span>Waktu Konfirmasi:</span>
-                        <span className="font-medium text-slate-600">{formatWIB(emailConfirmModal.booking.confirmedAt)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <a
-                      href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
-                        `Presentasi: ${emailConfirmModal.booking.namaKelompok} (${emailConfirmModal.booking.idKelompok})`
-                      )}&details=${encodeURIComponent(
-                        `Jadwal Presentasi:\nUrutan: ${emailConfirmModal.booking.urutan}\nHari: ${emailConfirmModal.booking.hari}\nTanggal: ${emailConfirmModal.booking.tanggal}\nJam: ${emailConfirmModal.booking.jam}\nKelas: ${emailConfirmModal.booking.kelasTeori}\nTema: ${emailConfirmModal.booking.tema}\nEmail: ${emailConfirmModal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                    >
-                      <CalendarPlus className="w-4 h-4" />
-                      <span>Simpan ke Google Calendar</span>
-                      <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-                    </a>
-
-                    <button
-                      type="button"
-                      onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-                      className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
-                    >
-                      Tutup & Lihat Jadwal
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Status: Baru Saja Berhasil Dikonfirmasi */}
-            {emailConfirmModal.status === 'success' && emailConfirmModal.booking && (
-              <div>
-                <div className="bg-gradient-to-br from-emerald-600 to-teal-700 p-6 text-white text-center">
-                  <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center mx-auto mb-3 backdrop-blur-xs">
-                    <CheckCircle2 className="w-8 h-8 text-white" />
-                  </div>
-                  <h3 className="text-xl font-bold tracking-tight">
-                    {emailConfirmModal.title}
-                  </h3>
-                  <p className="text-emerald-100 text-xs mt-1">
-                    {emailConfirmModal.message}
-                  </p>
-                </div>
-
-                <div className="p-6 space-y-4">
-                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 text-xs space-y-2">
-                    <div className="flex justify-between items-center pb-2 border-b border-slate-200/60">
-                      <span className="text-slate-500">Nomor Sesi</span>
-                      <span className="font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
-                        Urutan #{emailConfirmModal.booking.urutan} (Baris {emailConfirmModal.booking.rowNumber})
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Hari & Tanggal:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.hari}, {emailConfirmModal.booking.tanggal}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Jam Presentasi:</span>
-                      <span className="font-semibold font-mono">{emailConfirmModal.booking.jam}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Kelas Teori:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.kelasTeori}</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Kelompok:</span>
-                      <span className="font-semibold">{emailConfirmModal.booking.namaKelompok} ({emailConfirmModal.booking.idKelompok})</span>
-                    </div>
-                    <div className="flex justify-between text-slate-700">
-                      <span>Tema Presentasi:</span>
-                      <span className="font-semibold max-w-xs text-right">{emailConfirmModal.booking.tema}</span>
-                    </div>
-                    {emailConfirmModal.booking.email && (
-                      <div className="flex justify-between text-slate-700">
-                        <span>Email Terverifikasi:</span>
-                        <span className="font-mono font-semibold text-emerald-700">{emailConfirmModal.booking.email}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-2 pt-2">
-                    <a
-                      href={`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(
-                        `Presentasi: ${emailConfirmModal.booking.namaKelompok} (${emailConfirmModal.booking.idKelompok})`
-                      )}&details=${encodeURIComponent(
-                        `Jadwal Presentasi:\nUrutan: ${emailConfirmModal.booking.urutan}\nHari: ${emailConfirmModal.booking.hari}\nTanggal: ${emailConfirmModal.booking.tanggal}\nJam: ${emailConfirmModal.booking.jam}\nKelas: ${emailConfirmModal.booking.kelasTeori}\nTema: ${emailConfirmModal.booking.tema}\nEmail: ${emailConfirmModal.booking.email || '-'}\n\nTersimpan di Google Spreadsheet.`
-                      )}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition-colors"
-                    >
-                      <CalendarPlus className="w-4 h-4" />
-                      <span>Simpan ke Google Calendar</span>
-                      <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-                    </a>
-
-                    <button
-                      type="button"
-                      onClick={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
-                      className="w-full py-2.5 px-4 rounded-xl text-xs sm:text-sm font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 transition-colors"
-                    >
-                      Tutup & Lihat Jadwal
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <EmailConfirmModal
+        modal={emailConfirmModal}
+        onClose={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+      />
     </div>
   );
 }
