@@ -838,6 +838,22 @@ export default function App() {
           // Case A: Link is clicked again and was ALREADY confirmed previously
           if (res.alreadyConfirmed) {
             console.log('[EmailConfirm] already confirmed previously!');
+            // Self-healing: Ensure Google Sheet actually has the data written if previous write had failed
+            fetch('/api/public/book', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                formId: confirmedBooking.formId,
+                sheetId: confirmedBooking.sheetId,
+                sheetName: confirmedBooking.sheetName,
+                rowNumber: confirmedBooking.rowNumber,
+                kelasTeori: confirmedBooking.kelasTeori,
+                namaKelompok: confirmedBooking.namaKelompok,
+                tema: confirmedBooking.tema,
+                idKelompok: confirmedBooking.idKelompok,
+              }),
+            }).catch(() => {});
+
             setEmailConfirmModal({
               isOpen: true,
               status: 'already_confirmed',
