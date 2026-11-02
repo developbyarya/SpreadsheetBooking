@@ -356,6 +356,7 @@ export default function App() {
   const [isLoadingSheet, setIsLoadingSheet] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [sheetError, setSheetError] = useState<string | null>(null);
+  const [syncNotification, setSyncNotification] = useState<string | null>(null);
 
   // Workspace safety confirmation dialog state
   const [confirmationState, setConfirmationState] = useState<{
@@ -690,7 +691,7 @@ export default function App() {
     }
   }, [mergeSlotsWithBookings]);
 
-  // Refresh schedule slots using admin token if available
+  // Refresh schedule slots using admin token if available & auto-reconcile with Firestore
   const loadScheduleData = useCallback(
     async (token: string | null, sheetConfig: SpreadsheetConfig, formSlug?: string) => {
       if (!token) {
@@ -701,14 +702,79 @@ export default function App() {
       try {
         setIsRefreshing(true);
         setSheetError(null);
-        const data = await fetchPresentationSlots(token, sheetConfig);
+        let data = await fetchPresentationSlots(token, sheetConfig);
         const redundancy = await fetchBookingsFromFirestore(sheetConfig.id, sheetConfig.activeSheetName);
+
+        let syncedCount = 0;
         if (redundancy.length > 0) {
+          const confirmedBookings = redundancy.filter((r) => r.status === 'confirmed');
+          const missingInSheet = confirmedBookings.filter((b) => {
+            const slot = data.find((s) => s.rowNumber === b.rowNumber);
+            return slot && !slot.isBooked && !slot.namaKelompok && !slot.idKelompok;
+          });
+
+          if (missingInSheet.length > 0) {
+            console.log(`[Sync] Ditemukan ${missingInSheet.length} booking confirmed yang belum tercatat di Google Sheet. Menyinkronkan...`);
+            for (const b of missingInSheet) {
+              const targetSlot: PresentationSlot = {
+                rowNumber: b.rowNumber,
+                urutan: String(b.urutan || ''),
+                hari: b.hari || '',
+                tanggal: b.tanggal || '',
+                jam: b.jam || '',
+                kelasTeori: b.kelasTeori || '',
+                namaKelompok: b.namaKelompok || '',
+                tema: b.tema || '',
+                idKelompok: b.idKelompok || '',
+                isBooked: true,
+              };
+              const targetPayload: PresentationBookingPayload = {
+                kelasTeori: b.kelasTeori,
+                namaKelompok: b.namaKelompok,
+                tema: b.tema,
+                idKelompok: b.idKelompok,
+                email: b.email,
+              };
+
+              try {
+                await bookPresentationSlot(token, sheetConfig, targetSlot, targetPayload);
+                syncedCount++;
+              } catch (writeErr) {
+                console.warn(`[Sync] Gagal direct write baris ${b.rowNumber}:`, writeErr);
+                const proxyRes = await fetch('/api/public/book', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    sheetId: sheetConfig.id,
+                    sheetName: sheetConfig.activeSheetName,
+                    rowNumber: b.rowNumber,
+                    kelasTeori: b.kelasTeori,
+                    namaKelompok: b.namaKelompok,
+                    tema: b.tema,
+                    idKelompok: b.idKelompok,
+                  }),
+                }).catch(() => null);
+                if (proxyRes?.ok) syncedCount++;
+              }
+            }
+
+            // Ambil data terbaru setelah penulisan selesai
+            data = await fetchPresentationSlots(token, sheetConfig);
+          }
+
           setSlots(mergeSlotsWithBookings(data, redundancy));
         } else {
           setSlots(data);
         }
+
         await syncSessionWithBackend(token, sheetConfig);
+
+        if (syncedCount > 0) {
+          setSyncNotification(`Sinkronisasi berhasil: ${syncedCount} data booking disinkronkan ke Google Sheet.`);
+        } else {
+          setSyncNotification('Sinkronisasi selesai: Data Google Sheet & sistem sudah mutakhir.');
+        }
+        setTimeout(() => setSyncNotification(null), 4000);
       } catch (err: unknown) {
         console.error('Error fetching sheet data:', err);
         setSheetError(
@@ -1689,6 +1755,14 @@ export default function App() {
         modal={emailConfirmModal}
         onClose={() => setEmailConfirmModal((prev) => ({ ...prev, isOpen: false }))}
       />
+
+      {/* Floating Toast Notification */}
+      {syncNotification && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-slate-900 text-white rounded-2xl shadow-xl text-xs sm:text-sm animate-in fade-in slide-in-from-bottom-2 border border-slate-700">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{syncNotification}</span>
+        </div>
+      )}
     </div>
   );
 }
