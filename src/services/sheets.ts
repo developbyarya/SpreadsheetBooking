@@ -210,7 +210,50 @@ export async function bookPresentationSlot(
   const { id, activeSheetName } = config;
   const rowNumber = slot.rowNumber;
 
-  // Columns E (5) to H (8): [Kelas Teori, Nama Kelompok, Tema, ID_Kelompok]
+  // 1. Check if columns E:H already have content before writing (prevent overwrite)
+  const checkRange = encodeURIComponent(`'${activeSheetName}'!E${rowNumber}:H${rowNumber}`);
+  const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${checkRange}`;
+
+  try {
+    const checkResponse = await fetch(checkUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (checkResponse.ok) {
+      const checkData = await checkResponse.json();
+      const rowValues = (checkData.values?.[0] || []).map((v: unknown) =>
+        v !== undefined && v !== null ? String(v).trim() : ''
+      );
+      const [exKelas, exNama, exTema, exId] = rowValues;
+      const hasContent = Boolean(exKelas || exNama || exTema || exId);
+
+      if (hasContent) {
+        const details = [
+          exNama ? `Kelompok: ${exNama}` : '',
+          exId ? `ID: ${exId}` : '',
+          exKelas ? `Kelas: ${exKelas}` : '',
+          exTema ? `Tema: ${exTema}` : '',
+        ]
+          .filter(Boolean)
+          .join(', ');
+
+        const error = new Error(
+          `Slot pada baris ${rowNumber} sudah terisi di Google Spreadsheet (${details || 'Sudah ada data'}). Penulisan dibatalkan untuk mencegah penimpaan data.`
+        ) as Error & { isSlotOccupied?: boolean };
+        error.isSlotOccupied = true;
+        throw error;
+      }
+    }
+  } catch (checkErr: unknown) {
+    if ((checkErr as { isSlotOccupied?: boolean })?.isSlotOccupied) {
+      throw checkErr;
+    }
+    console.warn('Note checking slot occupancy:', checkErr);
+  }
+
+  // 2. Write Columns E (5) to H (8): [Kelas Teori, Nama Kelompok, Tema, ID_Kelompok]
   const values = [
     [
       booking.kelasTeori.trim(),

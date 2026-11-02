@@ -10,7 +10,7 @@
  * - Booking does NOT require login; login is for admin / owner only!
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { User } from 'firebase/auth';
 import {
   initAuth,
@@ -659,20 +659,29 @@ export default function App() {
           };
 
           let wroteDirectly = false;
+          let writeError: string | null = null;
+          let isOccupied = false;
+
           if (tokenToUse) {
             try {
               await bookPresentationSlot(tokenToUse, targetConfig, targetSlot, targetPayload);
               wroteDirectly = true;
-            } catch (errDirect) {
+            } catch (errDirect: unknown) {
+              const directErrorMsg = errDirect instanceof Error ? errDirect.message : String(errDirect);
               console.warn(
-                'Direct sheets write with token failed, falling back to /api/public/book:',
-                errDirect
+                'Direct sheets write with token note:',
+                directErrorMsg
               );
+              // If write was prevented because the slot already has content, do NOT overwrite via proxy!
+              if ((errDirect as { isSlotOccupied?: boolean })?.isSlotOccupied) {
+                isOccupied = true;
+                writeError = directErrorMsg;
+              }
             }
           }
 
-          if (!wroteDirectly) {
-            await fetch('/api/public/book', {
+          if (!wroteDirectly && !isOccupied) {
+            const proxyRes = await fetch('/api/public/book', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
@@ -685,9 +694,30 @@ export default function App() {
                 tema: confirmedBooking.tema,
                 idKelompok: confirmedBooking.idKelompok,
               }),
-            }).catch((errProxy) => {
-              console.warn('Public book proxy write note:', errProxy);
             });
+
+            if (!proxyRes.ok) {
+              const proxyData = await proxyRes.json().catch(() => ({}));
+              writeError = proxyData.error || 'Gagal menyimpan booking ke spreadsheet';
+              if (proxyRes.status === 409 || proxyData.alreadyOccupied) {
+                isOccupied = true;
+              }
+            } else {
+              wroteDirectly = true;
+            }
+          }
+
+          if (isOccupied || (!wroteDirectly && writeError)) {
+            setEmailConfirmModal({
+              isOpen: true,
+              status: 'error',
+              title: isOccupied ? 'Slot Sudah Terisi di Spreadsheet' : 'Gagal Menyimpan Booking',
+              message:
+                writeError ||
+                'Slot ini sudah memiliki data di Google Spreadsheet. Penulisan dibatalkan untuk mencegah penimpaan data.',
+              booking: confirmedBooking,
+            });
+            return;
           }
 
           setEmailConfirmModal({
@@ -811,33 +841,35 @@ export default function App() {
     const effectiveSheetId = activeFormItem?.sheetId || config?.id || '';
     const effectiveSheetName = activeFormItem?.sheetName || config?.activeSheetName || 'Sheet1';
 
-    // 1. Redundancy: Save booking to Firestore database
-    if (effectiveSheetId) {
-      await saveBookingToFirestore({
-        formId: formSlug,
-        sheetId: effectiveSheetId,
-        sheetName: effectiveSheetName,
-        rowNumber: slot.rowNumber,
-        urutan: slot.urutan,
-        hari: slot.hari,
-        tanggal: slot.tanggal,
-        jam: slot.jam,
-        kelasTeori: payload.kelasTeori,
-        namaKelompok: payload.namaKelompok,
-        tema: payload.tema,
-        idKelompok: payload.idKelompok,
-        bookedByAdmin: false,
-      });
-    }
+    const persistToFirestore = async () => {
+      if (effectiveSheetId) {
+        await saveBookingToFirestore({
+          formId: formSlug,
+          sheetId: effectiveSheetId,
+          sheetName: effectiveSheetName,
+          rowNumber: slot.rowNumber,
+          urutan: slot.urutan,
+          hari: slot.hari,
+          tanggal: slot.tanggal,
+          jam: slot.jam,
+          kelasTeori: payload.kelasTeori,
+          namaKelompok: payload.namaKelompok,
+          tema: payload.tema,
+          idKelompok: payload.idKelompok,
+          bookedByAdmin: false,
+        }).catch((e) => console.warn('Firestore redundancy note:', e));
+      }
+    };
 
-    // 2. Direct client call if admin token available
+    // 1. Direct client call if admin token available
     if (accessToken && config) {
       await bookPresentationSlot(accessToken, config, slot, payload);
+      await persistToFirestore();
       await loadScheduleData(accessToken, config);
       return;
     }
 
-    // 3. Direct client call using session token (Firestore or Service Account)
+    // 2. Direct client call using session token (Firestore or Service Account)
     const effectiveStartRow = activeFormItem?.startRow || config?.startRow || 54;
     const effectiveTitle = activeFormItem?.title || config?.title || 'Jadwal Presentasi';
     const targetConfig: SpreadsheetConfig = config || {
@@ -861,12 +893,13 @@ export default function App() {
 
       if (sessionToken) {
         await bookPresentationSlot(sessionToken, targetConfig, slot, payload);
+        await persistToFirestore();
         await loadPublicSlots(formSlug, effectiveSheetId, effectiveSheetName);
         return;
       }
     }
 
-    // 4. Fallback: Submit via backend public proxy
+    // 3. Fallback: Submit via backend public proxy
     const res = await fetch('/api/public/book', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -886,6 +919,8 @@ export default function App() {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || 'Gagal menyimpan booking ke spreadsheet');
     }
+
+    await persistToFirestore();
 
     // Reload public slots
     await loadPublicSlots(formSlug);

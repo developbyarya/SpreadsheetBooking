@@ -503,8 +503,8 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       return;
     }
 
-    // Check collision on column F (Nama Kelompok)
-    const checkRange = encodeURIComponent(`'${targetSheetName}'!F${rowNumber}`);
+    // Check whether columns E:H (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok) already have content
+    const checkRange = encodeURIComponent(`'${targetSheetName}'!E${rowNumber}:H${rowNumber}`);
     const checkRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${checkRange}`,
       {
@@ -514,10 +514,25 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
 
     if (checkRes.ok) {
       const checkData = await checkRes.json();
-      const existingName = checkData.values?.[0]?.[0];
-      if (existingName && existingName.toString().trim().length > 0) {
+      const rowValues = (checkData.values?.[0] || []).map((v: unknown) =>
+        v !== undefined && v !== null ? v.toString().trim() : ''
+      );
+      const [exKelas, exNama, exTema, exId] = rowValues;
+      const hasContent = Boolean(exKelas || exNama || exTema || exId);
+
+      if (hasContent) {
+        const details = [
+          exNama ? `Kelompok: ${exNama}` : '',
+          exId ? `ID: ${exId}` : '',
+          exKelas ? `Kelas: ${exKelas}` : '',
+          exTema ? `Tema: ${exTema}` : '',
+        ]
+          .filter(Boolean)
+          .join(', ');
+
         res.status(409).json({
-          error: `Slot ini baru saja dibooking oleh kelompok lain (${existingName}). Silakan pilih slot lain.`,
+          error: `Slot pada baris ${rowNumber} sudah terisi di spreadsheet (${details || 'Sudah ada data'}). Penulisan dibatalkan untuk mencegah penimpaan data.`,
+          alreadyOccupied: true,
         });
         return;
       }
