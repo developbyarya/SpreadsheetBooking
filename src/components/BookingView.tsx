@@ -117,6 +117,17 @@ export const BookingView: React.FC<BookingViewProps> = ({
       return;
     }
 
+    const cleanId = idKelompok.trim().toLowerCase();
+    const existingSlot = slots.find(
+      (s) => s.idKelompok && s.idKelompok.trim().toLowerCase() === cleanId && s.rowNumber !== selectedSlot.rowNumber
+    );
+    if (existingSlot) {
+      alert(
+        `ID Kelompok "${idKelompok.trim()}" sudah terdaftar pada Urutan #${existingSlot.urutan} (${existingSlot.namaKelompok || 'Kelompok lain'}). Setiap ID Kelompok hanya boleh muncul satu kali.`
+      );
+      return;
+    }
+
     const payload: PresentationBookingPayload = {
       kelasTeori: kelasTeori.trim(),
       namaKelompok: namaKelompok.trim(),

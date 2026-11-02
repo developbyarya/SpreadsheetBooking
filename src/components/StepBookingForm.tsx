@@ -262,6 +262,16 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         );
         return;
       }
+      // Rule 1: Email hanya boleh digunakan sekali
+      const existingEmailSlot = slots.find(
+        (s) => s.email && s.email.trim().toLowerCase() === cleanEmail && s.rowNumber !== selectedSlot?.rowNumber
+      );
+      if (existingEmailSlot) {
+        setErrorMsg(
+          `Email "${cleanEmail}" sudah digunakan untuk booking jadwal presentasi (Kelompok ${existingEmailSlot.namaKelompok || 'lain'}, Urutan #${existingEmailSlot.urutan}). Satu email hanya boleh digunakan satu kali.`
+        );
+        return;
+      }
       setCurrentStep(3);
     } else if (currentStep === 3) {
       if (!kelasTeori.trim()) {
@@ -270,8 +280,19 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       }
       setCurrentStep(4);
     } else if (currentStep === 4) {
-      if (!idKelompok.trim()) {
+      const cleanId = idKelompok.trim().toLowerCase();
+      if (!cleanId) {
         setErrorMsg('ID_Kelompok wajib diisi.');
+        return;
+      }
+      // Rule 2: ID hanya boleh muncul satu kali
+      const existingIdSlot = slots.find(
+        (s) => s.idKelompok && s.idKelompok.trim().toLowerCase() === cleanId && s.rowNumber !== selectedSlot?.rowNumber
+      );
+      if (existingIdSlot) {
+        setErrorMsg(
+          `ID Kelompok "${idKelompok.trim()}" sudah terdaftar pada Urutan #${existingIdSlot.urutan} (${existingIdSlot.namaKelompok || 'Kelompok lain'}). Setiap ID Kelompok hanya boleh mendaftar satu kali.`
+        );
         return;
       }
       setCurrentStep(5);
@@ -310,6 +331,31 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
           : 'Format email salah! Gunakan email institusi UPN Informatika: 123xxxxxx@student.upnyk.ac.id'
       );
       setCurrentStep(2);
+      return;
+    }
+
+    // Rule 1: Email hanya boleh digunakan sekali
+    const existingEmailSlot = slots.find(
+      (s) => s.email && s.email.trim().toLowerCase() === cleanEmail && s.rowNumber !== selectedSlot.rowNumber
+    );
+    if (existingEmailSlot) {
+      setErrorMsg(
+        `Email "${cleanEmail}" sudah digunakan untuk booking jadwal presentasi (Kelompok ${existingEmailSlot.namaKelompok || 'lain'}, Urutan #${existingEmailSlot.urutan}). Satu email hanya boleh digunakan satu kali.`
+      );
+      setCurrentStep(2);
+      return;
+    }
+
+    // Rule 2: ID hanya boleh muncul satu kali
+    const cleanId = idKelompok.trim().toLowerCase();
+    const existingIdSlot = slots.find(
+      (s) => s.idKelompok && s.idKelompok.trim().toLowerCase() === cleanId && s.rowNumber !== selectedSlot.rowNumber
+    );
+    if (existingIdSlot) {
+      setErrorMsg(
+        `ID Kelompok "${idKelompok.trim()}" sudah terdaftar pada Urutan #${existingIdSlot.urutan} (${existingIdSlot.namaKelompok || 'Kelompok lain'}). Setiap ID Kelompok hanya boleh mendaftar satu kali.`
+      );
+      setCurrentStep(4);
       return;
     }
 

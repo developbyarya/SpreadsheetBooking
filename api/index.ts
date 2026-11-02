@@ -547,6 +547,31 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       }
     }
 
+    // Check if ID_Kelompok already exists in another row in Google Sheet (Rule 2: ID hanya boleh muncul 1 kali)
+    if (idKelompok && idKelompok.toString().trim()) {
+      const targetId = idKelompok.toString().trim().toLowerCase();
+      const allIdRange = encodeURIComponent(`'${targetSheetName}'!H54:H600`);
+      const allIdRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${allIdRange}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      if (allIdRes.ok) {
+        const idData = await allIdRes.json();
+        const rows = idData.values || [];
+        for (let idx = 0; idx < rows.length; idx++) {
+          const actualRow = 54 + idx;
+          const cellVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase();
+          if (cellVal && cellVal === targetId && actualRow !== rowNumber) {
+            res.status(409).json({
+              error: `ID Kelompok "${idKelompok.toString().trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
+              duplicateId: true,
+            });
+            return;
+          }
+        }
+      }
+    }
+
     // Write Columns E:H (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok)
     const values = [
       [
@@ -664,6 +689,55 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
         });
         return;
       }
+    }
+
+    // Validation check: Email and ID uniqueness in Firestore bookings
+    try {
+      const fsBookingsRes = await fetch(
+        `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/bookings`
+      );
+      if (fsBookingsRes.ok) {
+        const fsData = await fsBookingsRes.json();
+        const docs = fsData.documents || [];
+        const cleanEmail = email.trim().toLowerCase();
+        const cleanId = (slotDetails.idKelompok || '').toString().trim().toLowerCase();
+        const now = Date.now();
+
+        for (const d of docs) {
+          const fields = d.fields || {};
+          const docId = d.name.split('/').pop();
+          if (docId === bookingId) continue;
+
+          const docStatus = fields.status?.stringValue;
+          const docExpiresAt = Number(fields.expiresAt?.integerValue || 0);
+
+          if (docStatus === 'cancelled') continue;
+          if (docStatus === 'pending' && (!docExpiresAt || now >= docExpiresAt)) continue;
+
+          const docEmail = (fields.email?.stringValue || '').trim().toLowerCase();
+          const docIdKelompok = (fields.idKelompok?.stringValue || '').trim().toLowerCase();
+          const docKelompok = fields.namaKelompok?.stringValue || 'lain';
+          const docUrutan = fields.urutan?.stringValue || '';
+
+          if (cleanEmail && docEmail === cleanEmail) {
+            res.status(409).json({
+              error: `Email "${email}" sudah digunakan untuk booking jadwal presentasi (Kelompok ${docKelompok}, Urutan #${docUrutan}). Satu email hanya boleh digunakan satu kali.`,
+              duplicateEmail: true,
+            });
+            return;
+          }
+
+          if (cleanId && docIdKelompok === cleanId) {
+            res.status(409).json({
+              error: `ID Kelompok "${slotDetails.idKelompok}" sudah terdaftar (Kelompok ${docKelompok}, Urutan #${docUrutan}). Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
+              duplicateId: true,
+            });
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Note checking Firestore duplicate email/id in backend:', e);
     }
 
     // EMAIL_BYPASS Mode: Bypass actual email sending and signal client that confirmation is immediate

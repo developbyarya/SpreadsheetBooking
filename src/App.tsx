@@ -404,6 +404,7 @@ export default function App() {
             namaKelompok: match.namaKelompok || s.namaKelompok,
             tema: match.tema || s.tema,
             idKelompok: match.idKelompok || s.idKelompok,
+            email: match.email || s.email,
           };
         }
         if (match.status === 'pending' && match.expiresAt && now < match.expiresAt) {
@@ -416,6 +417,7 @@ export default function App() {
             namaKelompok: match.namaKelompok || s.namaKelompok,
             tema: match.tema || s.tema,
             idKelompok: match.idKelompok || s.idKelompok,
+            email: match.email || s.email,
           };
         }
       }

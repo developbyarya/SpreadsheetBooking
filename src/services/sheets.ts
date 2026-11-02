@@ -22,6 +22,7 @@ export interface PresentationSlot {
   namaKelompok: string; // Column F (Nama Kelompok)
   tema: string; // Column G (Tema / Topik Presentasi)
   idKelompok: string; // Column H (ID_Kelompok)
+  email?: string; // Student verification email
   isBooked: boolean; // True if namaKelompok or idKelompok is not empty
   isHeld?: boolean; // True if temporarily held for email confirmation (15 mins)
   heldExpiresAt?: number;
@@ -253,7 +254,39 @@ export async function bookPresentationSlot(
     console.warn('Note checking slot occupancy:', checkErr);
   }
 
-  // 2. Write Columns E (5) to H (8): [Kelas Teori, Nama Kelompok, Tema, ID_Kelompok]
+  // 2. Check if ID_Kelompok already exists in another row in Google Sheet (Rule: ID hanya boleh muncul 1 kali)
+  if (booking.idKelompok && booking.idKelompok.trim()) {
+    const cleanId = booking.idKelompok.trim().toLowerCase();
+    const idRange = encodeURIComponent(`'${activeSheetName}'!H54:H600`);
+    const idCheckUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${idRange}`;
+    try {
+      const idRes = await fetch(idCheckUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (idRes.ok) {
+        const idData = await idRes.json();
+        const rows: string[][] = idData.values || [];
+        for (let idx = 0; idx < rows.length; idx++) {
+          const actualRow = 54 + idx;
+          const cellVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase();
+          if (cellVal && cellVal === cleanId && actualRow !== rowNumber) {
+            const duplicateError = new Error(
+              `ID Kelompok "${booking.idKelompok.trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`
+            ) as Error & { isDuplicateId?: boolean };
+            duplicateError.isDuplicateId = true;
+            throw duplicateError;
+          }
+        }
+      }
+    } catch (err: unknown) {
+      if ((err as { isDuplicateId?: boolean })?.isDuplicateId) {
+        throw err;
+      }
+      console.warn('Note checking duplicate ID_Kelompok:', err);
+    }
+  }
+
+  // 3. Write Columns E (5) to H (8): [Kelas Teori, Nama Kelompok, Tema, ID_Kelompok]
   const values = [
     [
       booking.kelasTeori.trim(),

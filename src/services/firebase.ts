@@ -365,6 +365,50 @@ export const createPendingBookingHold = async (
       }
     }
 
+    // Query all bookings in Firestore for this sheet to enforce uniqueness
+    const allBookings = await fetchBookingsFromFirestore(booking.sheetId, booking.sheetName);
+    const now = Date.now();
+    const cleanEmail = (booking.email || '').trim().toLowerCase();
+    const cleanId = (booking.idKelompok || '').trim().toLowerCase();
+
+    // 1. Validation Rule: Email hanya boleh digunakan sekali
+    if (cleanEmail) {
+      const emailConflict = allBookings.find((b) => {
+        if (b.rowNumber === booking.rowNumber) return false;
+        if (b.status === 'cancelled') return false;
+        if (b.status === 'pending' && (!b.expiresAt || now >= b.expiresAt)) return false;
+        const bEmail = (b.email || '').trim().toLowerCase();
+        return bEmail === cleanEmail;
+      });
+
+      if (emailConflict) {
+        return {
+          success: false,
+          bookingId: docId,
+          error: `Email "${booking.email}" sudah digunakan untuk booking jadwal presentasi (Kelompok ${emailConflict.namaKelompok || 'lain'}, Urutan #${emailConflict.urutan || emailConflict.rowNumber}). Satu email hanya boleh digunakan satu kali.`,
+        };
+      }
+    }
+
+    // 2. Validation Rule: ID hanya boleh muncul satu kali
+    if (cleanId) {
+      const idConflict = allBookings.find((b) => {
+        if (b.rowNumber === booking.rowNumber) return false;
+        if (b.status === 'cancelled') return false;
+        if (b.status === 'pending' && (!b.expiresAt || now >= b.expiresAt)) return false;
+        const bId = (b.idKelompok || '').trim().toLowerCase();
+        return bId === cleanId;
+      });
+
+      if (idConflict) {
+        return {
+          success: false,
+          bookingId: docId,
+          error: `ID Kelompok "${booking.idKelompok}" sudah terdaftar pada jadwal (Kelompok ${idConflict.namaKelompok || 'lain'}, Urutan #${idConflict.urutan || idConflict.rowNumber}). Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
+        };
+      }
+    }
+
     // Generate random confirmation token and 15-minute expiration
     const confirmToken = typeof crypto !== 'undefined' && crypto.randomUUID
       ? crypto.randomUUID()
