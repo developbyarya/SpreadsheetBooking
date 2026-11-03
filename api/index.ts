@@ -46,9 +46,16 @@ const DEFAULT_CONFIG = {
   sheetId: process.env.SPREADSHEET_ID || process.env.DEFAULT_SHEET_ID || '1y9ikk1kCJZsmrO8w5YQEXN8BFtensg8R8AcTo7xtQjQ',
   sheetName: process.env.DEFAULT_SHEET_NAME || 'Progress 2',
   startRow: Number(process.env.DEFAULT_START_ROW) || 59,
-  title: process.env.DEFAULT_FORM_TITLE || 'Salinan dari Progress Report Proyek Akhir Data Science',
+  title: process.env.DEFAULT_FORM_TITLE || 'Booking Presentasi Data Science',
   description: 'Pilih slot waktu dan lengkapi data kelompok Anda',
 };
+
+function sanitizeFormTitle(title?: string): string {
+  if (!title || title.includes('Salinan dari') || title === 'Jadwal Presentasi') {
+    return 'Booking Presentasi Data Science';
+  }
+  return title;
+}
 
 /**
  * Synchronize forms from Firestore REST API (runs automatically on cold starts)
@@ -65,7 +72,7 @@ async function syncFormsFromFirestore(): Promise<void> {
       const id = f.id?.stringValue || d.name.split('/').pop() || 'default';
       const sheetId = f.sheetId?.stringValue;
       const sheetName = f.sheetName?.stringValue || 'Sheet1';
-      const title = f.title?.stringValue || 'Jadwal Presentasi';
+      const title = sanitizeFormTitle(f.title?.stringValue);
       const description = f.description?.stringValue || '';
       const startRow = Number(f.startRow?.integerValue || f.startRow?.stringValue) || 54;
       const createdAt = Number(f.createdAt?.integerValue || f.createdAt?.stringValue) || Date.now();
@@ -169,7 +176,7 @@ export async function getEffectiveGoogleToken(sheetId?: string): Promise<string 
 }
 
 // Initialize with a default form if empty
-function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presentasi', title: string = 'Jadwal Presentasi') {
+function ensureDefaultForm(sheetId: string, sheetName: string = 'Jadwal Presentasi', title: string = 'Booking Presentasi Data Science') {
   if (formsMap.size === 0) {
     formsMap.set('default', {
       id: 'default',
@@ -318,7 +325,7 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
     const querySheetId = (req.query.sheetId as string) || '';
     const querySheetName = (req.query.sheetName as string) || (req.query.tab as string) || '';
     const queryStartRow = Number(req.query.startRow) || 54;
-    const queryTitle = (req.query.title as string) || 'Jadwal Presentasi';
+    const queryTitle = (req.query.title as string) || 'Booking Presentasi Data Science';
 
     // If formsMap is empty (cold start in serverless), sync from Firestore
     if (formsMap.size === 0) {
@@ -755,8 +762,8 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
       return;
     }
 
-    const title = formTitle || 'Jadwal Presentasi';
-    const subject = `[Konfirmasi] Booking Jadwal Presentasi: ${slotDetails.namaKelompok || 'Kelompok'}`;
+    const title = formTitle || 'Booking Presentasi Data Science';
+    const subject = `[Konfirmasi] Booking Presentasi Data Science: ${slotDetails.namaKelompok || 'Kelompok'}`;
 
     const htmlContent = `
       <!DOCTYPE html>

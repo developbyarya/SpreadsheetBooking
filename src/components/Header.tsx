@@ -58,14 +58,14 @@ export const Header: React.FC<HeaderProps> = ({
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xl font-bold tracking-tight text-slate-900">
-                  Slot<span className="text-emerald-600">Sync</span>
+                  Booking Presentasi <span className="text-emerald-600">Data Science</span>
                 </span>
                 <span className="text-[10px] font-semibold tracking-wider uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200/60 hidden sm:inline-block">
-                  Google Sheets Powered
+                  Google Sheets
                 </span>
               </div>
               <p className="text-xs text-slate-500 hidden md:block">
-                Appointments & schedule synced to your spreadsheet
+                Jadwal Presentasi Proyek Akhir Data Science
               </p>
             </div>
           </div>

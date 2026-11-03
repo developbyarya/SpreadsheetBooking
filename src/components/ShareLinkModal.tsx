@@ -20,7 +20,7 @@ interface ShareLinkModalProps {
 export const ShareLinkModal: React.FC<ShareLinkModalProps> = ({
   isOpen,
   onClose,
-  sheetTitle = 'Jadwal Presentasi',
+  sheetTitle = 'Booking Presentasi Data Science',
   sheetId,
 }) => {
   const [copied, setCopied] = useState(false);

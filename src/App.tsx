@@ -531,7 +531,7 @@ export default function App() {
         // Ensure default form exists in Firestore & backend
         const defaultForm: CustomForm = {
           id: 'default',
-          title: sheetConfig.title || 'Jadwal Presentasi',
+          title: sheetConfig.title || 'Booking Presentasi Data Science',
           sheetId: sheetConfig.id,
           sheetName: sheetConfig.activeSheetName || 'Sheet1',
           startRow: sheetConfig.startRow || 54,
@@ -597,7 +597,7 @@ export default function App() {
           id: activeForm!.sheetId || prev?.id || '',
           url: prev?.url || `https://docs.google.com/spreadsheets/d/${activeForm!.sheetId}/edit`,
           sheets: prev?.sheets || [activeForm!.sheetName],
-          title: activeForm!.title || 'Jadwal Presentasi',
+          title: activeForm!.title || 'Booking Presentasi Data Science',
           activeSheetName: activeForm!.sheetName || 'Jadwal Presentasi',
           startRow: activeForm!.startRow || 54,
         }));
@@ -622,7 +622,7 @@ export default function App() {
         if (sessionToken) {
           const sheetConfig: SpreadsheetConfig = {
             id: effectiveSheetId,
-            title: effectiveTitle || 'Jadwal Presentasi',
+            title: effectiveTitle || 'Booking Presentasi Data Science',
             url: `https://docs.google.com/spreadsheets/d/${effectiveSheetId}/edit`,
             activeSheetName: effectiveSheetName || 'Sheet1',
             sheets: [effectiveSheetName || 'Sheet1'],
@@ -674,7 +674,7 @@ export default function App() {
             id: data.form.sheetId || prev?.id || '',
             url: prev?.url || `https://docs.google.com/spreadsheets/d/${data.form.sheetId}/edit`,
             sheets: prev?.sheets || [data.form.sheetName],
-            title: data.form.title || 'Jadwal Presentasi',
+            title: data.form.title || 'Booking Presentasi Data Science',
             activeSheetName: data.form.sheetName || 'Jadwal Presentasi',
             startRow: data.form.startRow || 54,
           }));
@@ -836,12 +836,16 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Parse URL parameters on initial load (e.g. ?form=kelas-a or ?sheetId=...&sheetName=...)
+  // Parse URL parameters on initial load (e.g. ?form=kelas-a or ?sheetId=...&sheetName=... or ?admin=true)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const formSlug = params.get('form') || params.get('formId') || undefined;
     const sheetIdParam = params.get('sheetId') || params.get('sheet') || undefined;
     const tabParam = params.get('sheetName') || params.get('tab') || undefined;
+
+    if (params.get('admin') === 'true' || params.get('login') === 'true') {
+      setIsAdminLoginModalOpen(true);
+    }
 
     loadFormsFromServer();
     loadPublicSlots(formSlug, sheetIdParam, tabParam);
@@ -856,6 +860,18 @@ export default function App() {
       })
       .catch(() => {});
   }, [loadFormsFromServer, loadPublicSlots]);
+
+  // Keyboard shortcut for Dosen / Admin: Alt+A or Ctrl+Shift+A opens login modal
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') || (e.altKey && e.key.toLowerCase() === 'a')) {
+        e.preventDefault();
+        setIsAdminLoginModalOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Handle email confirmation link (?action=confirm&bookingId=...&token=...)
   useEffect(() => {
@@ -963,7 +979,7 @@ export default function App() {
 
           const targetConfig: SpreadsheetConfig = {
             id: confirmedBooking.sheetId,
-            title: 'Jadwal Presentasi',
+            title: 'Booking Presentasi Data Science',
             url: `https://docs.google.com/spreadsheets/d/${confirmedBooking.sheetId}/edit`,
             activeSheetName: confirmedBooking.sheetName || 'Sheet1',
             sheets: [confirmedBooking.sheetName || 'Sheet1'],
@@ -1204,7 +1220,7 @@ export default function App() {
 
     // 2. Direct client call using session token (Firestore or Service Account)
     const effectiveStartRow = activeFormItem?.startRow || config?.startRow || 54;
-    const effectiveTitle = activeFormItem?.title || config?.title || 'Jadwal Presentasi';
+    const effectiveTitle = activeFormItem?.title || config?.title || 'Booking Presentasi Data Science';
     const targetConfig: SpreadsheetConfig = config || {
       id: effectiveSheetId,
       title: effectiveTitle,
@@ -1379,8 +1395,15 @@ export default function App() {
     await loadScheduleData(accessToken, updated);
   };
 
+  const formatAppTitle = (rawTitle?: string) => {
+    if (!rawTitle || rawTitle.includes('Salinan dari') || rawTitle === 'Jadwal Presentasi') {
+      return 'Booking Presentasi Data Science';
+    }
+    return rawTitle;
+  };
+
   // Current display title & description
-  const currentTitle = activeFormItem?.title || config?.title || 'Jadwal Presentasi';
+  const currentTitle = formatAppTitle(activeFormItem?.title || config?.title);
   const currentDescription = activeFormItem?.description;
   const currentTabName = activeFormItem?.sheetName || config?.activeSheetName;
 

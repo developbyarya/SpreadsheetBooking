@@ -14,7 +14,7 @@ interface FormClosedViewProps {
 }
 
 export const FormClosedView: React.FC<FormClosedViewProps> = ({
-  sheetTitle = 'Jadwal Presentasi',
+  sheetTitle = 'Booking Presentasi Data Science',
   tabName,
   closedAt,
   openAt,

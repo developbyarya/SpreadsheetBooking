@@ -66,7 +66,7 @@ interface PendingHoldState {
 
 export const StepBookingForm: React.FC<StepBookingFormProps> = ({
   slots,
-  sheetTitle = 'Jadwal Presentasi',
+  sheetTitle = 'Booking Presentasi Data Science',
   formDescription,
   tabName,
   sheetUrl,
@@ -603,20 +603,24 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
               </span>
             )}
           </div>
-          <p className="text-xs text-slate-500">
-            {formDescription || 'Verifikasi Email Institusi Informatika UPN • Slot ditahan 15 menit'}
-          </p>
+          {formDescription ? (
+            <p className="text-xs text-slate-500">
+              {formDescription}
+            </p>
+          ) : null}
         </div>
 
-        {/* Unobtrusive Admin Login button for owner */}
-        <button
-          type="button"
-          onClick={onOpenAdminLogin}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-300 transition-colors shadow-2xs"
-        >
-          <Lock className="w-3.5 h-3.5" />
-          <span>{isAdminLoggedIn ? 'Panel Admin' : 'Login Admin / Dosen'}</span>
-        </button>
+        {/* Admin Login button only when logged in */}
+        {isAdminLoggedIn && (
+          <button
+            type="button"
+            onClick={onOpenAdminLogin}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 hover:text-emerald-700 bg-white border border-slate-200 hover:border-emerald-300 transition-colors shadow-2xs"
+          >
+            <Lock className="w-3.5 h-3.5" />
+            <span>Panel Admin</span>
+          </button>
+        )}
       </div>
 
       {/* Deadline Info Banner if configured */}
