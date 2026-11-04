@@ -507,11 +507,54 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
 // Public endpoint: Submit booking without student login
 app.post('/api/public/book', async (req: Request, res: Response) => {
   try {
-    const { formId, sheetId: bodySheetId, sheetName: bodySheetName, rowNumber, kelasTeori, namaKelompok, tema, idKelompok } = req.body;
+    const {
+      formId,
+      sheetId: bodySheetId,
+      sheetName: bodySheetName,
+      rowNumber,
+      kelasTeori,
+      namaKelompok,
+      tema,
+      idKelompok,
+      email,
+      bookingId,
+      confirmToken,
+      allowFallback = true,
+    } = req.body;
 
     if (!rowNumber || !namaKelompok || !idKelompok) {
       res.status(400).json({ error: 'Data booking tidak lengkap (Nama Kelompok & ID_Kelompok wajib diisi)' });
       return;
+    }
+
+    // Security Verification: If confirmation token/bookingId is provided or verification is required, validate Firestore hold
+    if (bookingId && confirmToken) {
+      try {
+        const snap = await fetch(
+          `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/bookings/${encodeURIComponent(bookingId)}`
+        );
+        if (!snap.ok) {
+          res.status(400).json({ error: 'Data reservasi (hold) tidak ditemukan di database.' });
+          return;
+        }
+        const bData = await snap.json();
+        const storedToken = bData.fields?.confirmToken?.stringValue;
+        const storedExpiresAt = Number(bData.fields?.expiresAt?.integerValue || 0);
+        const storedStatus = bData.fields?.status?.stringValue;
+        const now = Date.now();
+
+        if (storedToken !== confirmToken) {
+          res.status(403).json({ error: 'Token verifikasi email tidak valid atau salah.' });
+          return;
+        }
+
+        if (storedStatus !== 'confirmed' && storedExpiresAt && now >= storedExpiresAt) {
+          res.status(410).json({ error: 'Masa berlaku hold slot (15 menit) telah habis. Silakan pilih jadwal kembali.' });
+          return;
+        }
+      } catch (err) {
+        console.warn('Backend hold check warning:', err);
+      }
     }
 
     let targetSheetId = bodySheetId;
@@ -578,8 +621,8 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       const hasContent = Boolean(exKelas || exNama || exTema || exId);
 
       if (hasContent) {
-        // If Room 1 was full, check if Room 2 is available!
-        if (targetRoom === 1) {
+        // If user specifically requested Room 1 and allowFallback is true, try Room 2 if free
+        if (targetRoom === 1 && allowFallback !== false) {
           const r2CheckRange = encodeURIComponent(`'${targetSheetName}'!I${rowNumber}:L${rowNumber}`);
           const r2Res = await fetch(
             `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${r2CheckRange}`,
@@ -597,7 +640,7 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
               colEnd = 'L';
             } else {
               res.status(409).json({
-                error: `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan.`,
+                error: `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan untuk mencegah penimpaan data.`,
                 alreadyOccupied: true,
               });
               return;
@@ -605,7 +648,7 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
           }
         } else {
           res.status(409).json({
-            error: `Room 2 pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan.`,
+            error: `Ruangan ${targetRoom === 2 ? 'Room 2' : 'Room 1'} pada baris ${rowNumber} sudah terisi (${exNama || 'Kelompok lain'}). Dilarang menimpa data yang sudah terisi.`,
             alreadyOccupied: true,
           });
           return;
