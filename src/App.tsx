@@ -941,7 +941,9 @@ export default function App() {
     const sheetIdParam = params.get('sheetId') || params.get('sheet') || undefined;
     const tabParam = params.get('sheetName') || params.get('tab') || undefined;
 
-    if (params.get('admin') === 'true' || params.get('login') === 'true') {
+    const path = window.location.pathname.toLowerCase();
+    const isAdminPath = path === '/admin' || path === '/login' || path.startsWith('/admin/');
+    if (isAdminPath || params.get('admin') === 'true' || params.get('login') === 'true') {
       setIsAdminLoginModalOpen(true);
     }
 
