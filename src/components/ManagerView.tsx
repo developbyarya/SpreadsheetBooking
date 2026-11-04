@@ -28,7 +28,7 @@ interface ManagerViewProps {
     tanggal: string;
     jam: string;
   }) => Promise<void>;
-  onClearBooking: (slot: PresentationSlot) => Promise<void>;
+  onClearBooking: (slot: PresentationSlot, room?: 1 | 2) => Promise<void>;
   onUpdateConfig: (newStartRow: number, newSheetName?: string) => Promise<void>;
   onRefreshData: () => void;
   onOpenShareModal?: () => void;
@@ -78,15 +78,21 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
     if (hariFilter !== 'all' && slot.hari.toLowerCase() !== hariFilter.toLowerCase()) return false;
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
+      const r1 = slot.room1 || { kelasTeori: slot.kelasTeori, namaKelompok: slot.namaKelompok, tema: slot.tema, idKelompok: slot.idKelompok };
+      const r2 = slot.room2 || { kelasTeori: '', namaKelompok: '', tema: '', idKelompok: '' };
       return (
         slot.urutan.toLowerCase().includes(q) ||
         slot.hari.toLowerCase().includes(q) ||
         slot.tanggal.toLowerCase().includes(q) ||
         slot.jam.toLowerCase().includes(q) ||
-        slot.kelasTeori.toLowerCase().includes(q) ||
-        slot.namaKelompok.toLowerCase().includes(q) ||
-        slot.tema.toLowerCase().includes(q) ||
-        slot.idKelompok.toLowerCase().includes(q) ||
+        (r1.kelasTeori || '').toLowerCase().includes(q) ||
+        (r1.namaKelompok || '').toLowerCase().includes(q) ||
+        (r1.tema || '').toLowerCase().includes(q) ||
+        (r1.idKelompok || '').toLowerCase().includes(q) ||
+        (r2.kelasTeori || '').toLowerCase().includes(q) ||
+        (r2.namaKelompok || '').toLowerCase().includes(q) ||
+        (r2.tema || '').toLowerCase().includes(q) ||
+        (r2.idKelompok || '').toLowerCase().includes(q) ||
         slot.rowNumber.toString().includes(q)
       );
     }
@@ -232,7 +238,7 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
           <p className="text-xs font-medium text-slate-500">Mulai Baris Sheet</p>
           <div className="flex items-baseline gap-2">
             <span className="text-2xl font-extrabold text-slate-800">Baris {config?.startRow || 54}</span>
-            <span className="text-xs text-slate-400">kolom A-H</span>
+            <span className="text-xs text-slate-400">kolom A-L (Room 1 & Room 2)</span>
           </div>
         </div>
       </div>
@@ -318,130 +324,175 @@ export const ManagerView: React.FC<ManagerViewProps> = ({
             Col B: Hari
             Col C: Tanggal
             Col D: Jam
-            Col E: Kelas Teori
-            Col F: Nama Kelompok
-            Col G: Tema
-            Col H: ID_Kelompok
+            Col E-H: Room 1 (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok)
+            Col I-L: Room 2 (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok)
         */}
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse text-xs">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/50 text-slate-500 font-semibold uppercase tracking-wider text-[11px]">
                 <th className="px-4 py-3 text-center">Row</th>
-                <th className="px-4 py-3 font-bold text-slate-700">Urutan (A)</th>
-                <th className="px-4 py-3">Hari (B)</th>
-                <th className="px-4 py-3">Tanggal (C)</th>
-                <th className="px-4 py-3">Jam (D)</th>
-                <th className="px-4 py-3 text-emerald-800 bg-emerald-50/40">Kelas Teori (E)</th>
-                <th className="px-4 py-3 text-emerald-800 bg-emerald-50/40">Nama Kelompok (F)</th>
-                <th className="px-4 py-3 text-emerald-800 bg-emerald-50/40">Tema (G)</th>
-                <th className="px-4 py-3 text-emerald-800 bg-emerald-50/40">ID_Kelompok (H)</th>
+                <th className="px-4 py-3 font-bold text-slate-700">Urutan</th>
+                <th className="px-4 py-3">Hari & Tanggal</th>
+                <th className="px-4 py-3">Jam</th>
+                <th className="px-4 py-3 text-emerald-900 bg-emerald-50/60 font-bold border-l border-emerald-100">Room 1 (E:H)</th>
+                <th className="px-4 py-3 text-sky-900 bg-sky-50/60 font-bold border-l border-sky-100">Room 2 (I:L)</th>
                 <th className="px-4 py-3 text-center">Status</th>
-                <th className="px-4 py-3 text-right">Aksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredSlots.length === 0 ? (
                 <tr>
-                  <td colSpan={11} className="px-6 py-12 text-center text-slate-400">
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-400">
                     Tidak ada data baris jadwal yang cocok. Pastikan tab spreadsheet dan baris awal ({config?.startRow || 54}) sudah tepat.
                   </td>
                 </tr>
               ) : (
-                filteredSlots.map((slot) => (
-                  <tr
-                    key={slot.rowNumber}
-                    className={`hover:bg-slate-50/80 transition-colors ${
-                      slot.isBooked ? 'bg-indigo-50/15' : ''
-                    }`}
-                  >
-                    {/* Row Number */}
-                    <td className="px-4 py-3.5 text-center font-mono text-[11px] text-slate-400 font-medium">
-                      {slot.rowNumber}
-                    </td>
+                filteredSlots.map((slot) => {
+                  const r1 = slot.room1 || {
+                    kelasTeori: slot.kelasTeori,
+                    namaKelompok: slot.namaKelompok,
+                    tema: slot.tema,
+                    idKelompok: slot.idKelompok,
+                    isBooked: Boolean(slot.namaKelompok || slot.idKelompok),
+                  };
+                  const r2 = slot.room2 || {
+                    kelasTeori: '',
+                    namaKelompok: '',
+                    tema: '',
+                    idKelompok: '',
+                    isBooked: false,
+                  };
 
-                    {/* Col A: Urutan */}
-                    <td className="px-4 py-3.5 font-bold font-mono text-slate-900">
-                      #{slot.urutan}
-                    </td>
+                  return (
+                    <tr
+                      key={slot.rowNumber}
+                      className={`hover:bg-slate-50/80 transition-colors ${
+                        slot.isBooked ? 'bg-indigo-50/15' : ''
+                      }`}
+                    >
+                      {/* Row Number */}
+                      <td className="px-4 py-3.5 text-center font-mono text-[11px] text-slate-400 font-medium">
+                        {slot.rowNumber}
+                      </td>
 
-                    {/* Col B: Hari */}
-                    <td className="px-4 py-3.5 font-semibold text-slate-800">
-                      {slot.hari || '—'}
-                    </td>
+                      {/* Col A: Urutan */}
+                      <td className="px-4 py-3.5 font-bold font-mono text-slate-900">
+                        #{slot.urutan}
+                      </td>
 
-                    {/* Col C: Tanggal */}
-                    <td className="px-4 py-3.5 text-slate-700">
-                      {slot.tanggal || '—'}
-                    </td>
+                      {/* Col B & C: Hari & Tanggal */}
+                      <td className="px-4 py-3.5">
+                        <div className="font-semibold text-slate-800">{slot.hari || '—'}</div>
+                        <div className="text-slate-500 text-[11px]">{slot.tanggal || '—'}</div>
+                      </td>
 
-                    {/* Col D: Jam */}
-                    <td className="px-4 py-3.5 font-mono text-slate-700 text-[11px]">
-                      {slot.jam || '—'}
-                    </td>
+                      {/* Col D: Jam */}
+                      <td className="px-4 py-3.5 font-mono text-slate-700 text-[11px]">
+                        {slot.jam || '—'}
+                      </td>
 
-                    {/* Col E: Kelas Teori */}
-                    <td className="px-4 py-3.5 font-medium text-slate-800 bg-emerald-50/10">
-                      {slot.kelasTeori || <span className="text-slate-300 italic">kosong</span>}
-                    </td>
+                      {/* Room 1 (Cols E:H) */}
+                      <td className="px-4 py-3.5 bg-emerald-50/15 border-l border-emerald-100 align-top min-w-[220px]">
+                        {r1.isBooked ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-slate-900 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                {r1.namaKelompok || '—'}
+                              </span>
+                              {r1.idKelompok && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 font-mono text-[10px] font-bold">
+                                  {r1.idKelompok}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-600">
+                              <span className="font-medium text-slate-500">Kelas:</span> {r1.kelasTeori || '—'}
+                            </div>
+                            <div className="text-[11px] text-slate-600 truncate max-w-xs" title={r1.tema}>
+                              <span className="font-medium text-slate-500">Tema:</span> {r1.tema || '—'}
+                            </div>
+                            <div className="pt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onClearBooking(slot, 1)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition-colors"
+                                title="Reset data Room 1"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Reset Room 1</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-slate-400 italic text-[11px] flex items-center gap-1 py-1">
+                            <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                            <span>Room 1 Kosong</span>
+                          </div>
+                        )}
+                      </td>
 
-                    {/* Col F: Nama Kelompok */}
-                    <td className="px-4 py-3.5 font-semibold text-slate-900 bg-emerald-50/10">
-                      {slot.namaKelompok ? (
-                        <div className="flex items-center gap-1.5">
-                          <Users className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                          <span>{slot.namaKelompok}</span>
-                        </div>
-                      ) : (
-                        <span className="text-slate-300 italic">kosong</span>
-                      )}
-                    </td>
+                      {/* Room 2 (Cols I:L) */}
+                      <td className="px-4 py-3.5 bg-sky-50/15 border-l border-sky-100 align-top min-w-[220px]">
+                        {r2.isBooked ? (
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-bold text-slate-900 flex items-center gap-1">
+                                <Users className="w-3.5 h-3.5 text-sky-600 shrink-0" />
+                                {r2.namaKelompok || '—'}
+                              </span>
+                              {r2.idKelompok && (
+                                <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 font-mono text-[10px] font-bold">
+                                  {r2.idKelompok}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-slate-600">
+                              <span className="font-medium text-slate-500">Kelas:</span> {r2.kelasTeori || '—'}
+                            </div>
+                            <div className="text-[11px] text-slate-600 truncate max-w-xs" title={r2.tema}>
+                              <span className="font-medium text-slate-500">Tema:</span> {r2.tema || '—'}
+                            </div>
+                            <div className="pt-1.5">
+                              <button
+                                type="button"
+                                onClick={() => onClearBooking(slot, 2)}
+                                className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition-colors"
+                                title="Reset data Room 2"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                <span>Reset Room 2</span>
+                              </button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-slate-400 italic text-[11px] flex items-center gap-1 py-1">
+                            <span className="w-2 h-2 rounded-full bg-sky-400 inline-block"></span>
+                            <span>Room 2 Kosong</span>
+                          </div>
+                        )}
+                      </td>
 
-                    {/* Col G: Tema */}
-                    <td className="px-4 py-3.5 text-slate-700 max-w-xs truncate bg-emerald-50/10">
-                      {slot.tema || <span className="text-slate-300 italic">kosong</span>}
-                    </td>
-
-                    {/* Col H: ID_Kelompok */}
-                    <td className="px-4 py-3.5 font-mono text-slate-800 bg-emerald-50/10">
-                      {slot.idKelompok ? (
-                        <span className="px-2 py-0.5 rounded bg-slate-100 text-slate-700 font-bold">
-                          {slot.idKelompok}
-                        </span>
-                      ) : (
-                        <span className="text-slate-300 italic">kosong</span>
-                      )}
-                    </td>
-
-                    {/* Status */}
-                    <td className="px-4 py-3.5 text-center">
-                      {slot.isBooked ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">
-                          Terisi
-                        </span>
-                      ) : (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
-                          Kosong
-                        </span>
-                      )}
-                    </td>
-
-                    {/* Actions */}
-                    <td className="px-4 py-3.5 text-right">
-                      {slot.isBooked && (
-                        <button
-                          type="button"
-                          onClick={() => onClearBooking(slot)}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-medium text-rose-700 bg-rose-50 border border-rose-200 rounded-lg hover:bg-rose-100 transition-colors"
-                          title="Hapus booking dan kembalikan slot menjadi kosong"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                          <span>Reset Slot</span>
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))
+                      {/* Status */}
+                      <td className="px-4 py-3.5 text-center whitespace-nowrap">
+                        {slot.isBooked ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                            Penuh (2/2)
+                          </span>
+                        ) : slot.availableRoomsCount === 1 ? (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                            Sisa 1 Room
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            Tersedia (2 Room)
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>

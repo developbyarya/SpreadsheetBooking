@@ -167,6 +167,12 @@ function EmailConfirmModal({ modal, onClose }: EmailConfirmModalProps) {
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-700">
+                  <span>Ruangan:</span>
+                  <span className="font-bold text-blue-800 bg-blue-100/80 px-2 py-0.5 rounded">
+                    Room {modal.booking.room || 1}
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-700">
                   <span>Hari & Tanggal:</span>
                   <span className="font-semibold">{modal.booking.hari}, {modal.booking.tanggal}</span>
                 </div>
@@ -249,6 +255,12 @@ function EmailConfirmModal({ modal, onClose }: EmailConfirmModalProps) {
                   <span className="text-slate-500">Nomor Sesi</span>
                   <span className="font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
                     Urutan #{modal.booking.urutan} (Baris {modal.booking.rowNumber})
+                  </span>
+                </div>
+                <div className="flex justify-between text-slate-700">
+                  <span>Ruangan:</span>
+                  <span className="font-bold text-blue-800 bg-blue-100/80 px-2 py-0.5 rounded">
+                    Room {modal.booking.room || 1}
                   </span>
                 </div>
                 <div className="flex justify-between text-slate-700">
@@ -389,39 +401,115 @@ export default function App() {
   });
   const hasProcessedConfirmRef = useRef(false);
 
-  // Helper to merge fetched Google Sheet slots with Firestore bookings (including 15-min holds)
+  // Helper to merge fetched Google Sheet slots with Firestore bookings (including 15-min holds for Room 1 and Room 2)
   const mergeSlotsWithBookings = useCallback((sheetSlots: PresentationSlot[], redundancy: BookingRecord[]): PresentationSlot[] => {
     const now = Date.now();
     return sheetSlots.map((s) => {
-      const match = redundancy.find((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
-      if (match) {
-        if (match.status === 'confirmed') {
-          return {
-            ...s,
-            isBooked: true,
-            isHeld: false,
-            kelasTeori: match.kelasTeori || s.kelasTeori,
-            namaKelompok: match.namaKelompok || s.namaKelompok,
-            tema: match.tema || s.tema,
-            idKelompok: match.idKelompok || s.idKelompok,
-            email: match.email || s.email,
-          };
-        }
-        if (match.status === 'pending' && match.expiresAt && now < match.expiresAt) {
-          return {
-            ...s,
-            isBooked: true,
-            isHeld: true,
-            heldExpiresAt: match.expiresAt,
-            kelasTeori: match.kelasTeori || s.kelasTeori,
-            namaKelompok: match.namaKelompok || s.namaKelompok,
-            tema: match.tema || s.tema,
-            idKelompok: match.idKelompok || s.idKelompok,
-            email: match.email || s.email,
-          };
+      const rowMatches = redundancy.filter((r) => r.rowNumber === s.rowNumber && r.status !== 'cancelled');
+
+      let updatedRoom1 = {
+        ...(s.room1 || {
+          kelasTeori: s.kelasTeori || '',
+          namaKelompok: s.namaKelompok || '',
+          tema: s.tema || '',
+          idKelompok: s.idKelompok || '',
+          isBooked: Boolean(s.namaKelompok || s.idKelompok),
+        }),
+      };
+
+      let updatedRoom2 = {
+        ...(s.room2 || {
+          kelasTeori: '',
+          namaKelompok: '',
+          tema: '',
+          idKelompok: '',
+          isBooked: false,
+        }),
+      };
+
+      for (const m of rowMatches) {
+        const isR2 = m.room === 2 || m.id.endsWith('_room2');
+        if (isR2) {
+          if (m.status === 'confirmed') {
+            updatedRoom2 = {
+              ...updatedRoom2,
+              isBooked: true,
+              isHeld: false,
+              kelasTeori: m.kelasTeori || updatedRoom2.kelasTeori,
+              namaKelompok: m.namaKelompok || updatedRoom2.namaKelompok,
+              tema: m.tema || updatedRoom2.tema,
+              idKelompok: m.idKelompok || updatedRoom2.idKelompok,
+              email: m.email || updatedRoom2.email,
+            };
+          } else if (m.status === 'pending' && m.expiresAt && now < m.expiresAt) {
+            updatedRoom2 = {
+              ...updatedRoom2,
+              isBooked: true,
+              isHeld: true,
+              heldExpiresAt: m.expiresAt,
+              kelasTeori: m.kelasTeori || updatedRoom2.kelasTeori,
+              namaKelompok: m.namaKelompok || updatedRoom2.namaKelompok,
+              tema: m.tema || updatedRoom2.tema,
+              idKelompok: m.idKelompok || updatedRoom2.idKelompok,
+              email: m.email || updatedRoom2.email,
+            };
+          }
+        } else {
+          // Room 1
+          if (m.status === 'confirmed') {
+            updatedRoom1 = {
+              ...updatedRoom1,
+              isBooked: true,
+              isHeld: false,
+              kelasTeori: m.kelasTeori || updatedRoom1.kelasTeori,
+              namaKelompok: m.namaKelompok || updatedRoom1.namaKelompok,
+              tema: m.tema || updatedRoom1.tema,
+              idKelompok: m.idKelompok || updatedRoom1.idKelompok,
+              email: m.email || updatedRoom1.email,
+            };
+          } else if (m.status === 'pending' && m.expiresAt && now < m.expiresAt) {
+            updatedRoom1 = {
+              ...updatedRoom1,
+              isBooked: true,
+              isHeld: true,
+              heldExpiresAt: m.expiresAt,
+              kelasTeori: m.kelasTeori || updatedRoom1.kelasTeori,
+              namaKelompok: m.namaKelompok || updatedRoom1.namaKelompok,
+              tema: m.tema || updatedRoom1.tema,
+              idKelompok: m.idKelompok || updatedRoom1.idKelompok,
+              email: m.email || updatedRoom1.email,
+            };
+          }
         }
       }
-      return s;
+
+      const room1Avail = !updatedRoom1.isBooked && !updatedRoom1.isHeld;
+      const room2Avail = !updatedRoom2.isBooked && !updatedRoom2.isHeld;
+
+      const availableRoom: 1 | 2 | undefined = room1Avail ? 1 : room2Avail ? 2 : undefined;
+      const availableRoomsCount = (room1Avail ? 1 : 0) + (room2Avail ? 1 : 0);
+      const isBooked = !room1Avail && !room2Avail; // Full only when BOTH rooms are occupied/held
+      const isHeld = isBooked && Boolean(updatedRoom1.isHeld || updatedRoom2.isHeld);
+
+      const activeRoom = availableRoom || 1;
+      const activeData = activeRoom === 2 ? updatedRoom2 : updatedRoom1;
+
+      return {
+        ...s,
+        room1: updatedRoom1,
+        room2: updatedRoom2,
+        availableRoom,
+        availableRoomsCount,
+        isBooked,
+        isHeld,
+        heldExpiresAt: updatedRoom1.heldExpiresAt || updatedRoom2.heldExpiresAt,
+        kelasTeori: activeData.kelasTeori || '',
+        namaKelompok: activeData.namaKelompok || '',
+        tema: activeData.tema || '',
+        idKelompok: activeData.idKelompok || '',
+        email: activeData.email || '',
+        room: activeRoom,
+      };
     });
   }, []);
 
@@ -712,23 +800,31 @@ export default function App() {
           const confirmedBookings = redundancy.filter((r) => r.status === 'confirmed');
           const missingInSheet = confirmedBookings.filter((b) => {
             const slot = data.find((s) => s.rowNumber === b.rowNumber);
-            return slot && !slot.isBooked && !slot.namaKelompok && !slot.idKelompok;
+            if (!slot) return false;
+            const targetRoom = b.room === 2 ? 2 : 1;
+            const rData = targetRoom === 2 ? slot.room2 : slot.room1;
+            return !rData.isBooked && !rData.namaKelompok && !rData.idKelompok;
           });
 
           if (missingInSheet.length > 0) {
             console.log(`[Sync] Ditemukan ${missingInSheet.length} booking confirmed yang belum tercatat di Google Sheet. Menyinkronkan...`);
             for (const b of missingInSheet) {
+              const targetRoom = b.room === 2 ? 2 : 1;
               const targetSlot: PresentationSlot = {
                 rowNumber: b.rowNumber,
                 urutan: String(b.urutan || ''),
                 hari: b.hari || '',
                 tanggal: b.tanggal || '',
                 jam: b.jam || '',
+                room1: { kelasTeori: '', namaKelompok: '', tema: '', idKelompok: '', isBooked: false },
+                room2: { kelasTeori: '', namaKelompok: '', tema: '', idKelompok: '', isBooked: false },
                 kelasTeori: b.kelasTeori || '',
                 namaKelompok: b.namaKelompok || '',
                 tema: b.tema || '',
                 idKelompok: b.idKelompok || '',
                 isBooked: true,
+                availableRoomsCount: 1,
+                room: targetRoom,
               };
               const targetPayload: PresentationBookingPayload = {
                 kelasTeori: b.kelasTeori,
@@ -736,6 +832,7 @@ export default function App() {
                 tema: b.tema,
                 idKelompok: b.idKelompok,
                 email: b.email,
+                room: targetRoom,
               };
 
               try {
@@ -750,6 +847,7 @@ export default function App() {
                     sheetId: sheetConfig.id,
                     sheetName: sheetConfig.activeSheetName,
                     rowNumber: b.rowNumber,
+                    room: targetRoom,
                     kelasTeori: b.kelasTeori,
                     namaKelompok: b.namaKelompok,
                     tema: b.tema,
@@ -931,6 +1029,7 @@ export default function App() {
                 sheetId: confirmedBooking.sheetId,
                 sheetName: confirmedBooking.sheetName,
                 rowNumber: confirmedBooking.rowNumber,
+                room: confirmedBooking.room || 1,
                 kelasTeori: confirmedBooking.kelasTeori,
                 namaKelompok: confirmedBooking.namaKelompok,
                 tema: confirmedBooking.tema,
@@ -992,11 +1091,15 @@ export default function App() {
             hari: confirmedBooking.hari || '',
             tanggal: confirmedBooking.tanggal || '',
             jam: confirmedBooking.jam || '',
+            room1: { kelasTeori: '', namaKelompok: '', tema: '', idKelompok: '', isBooked: false },
+            room2: { kelasTeori: '', namaKelompok: '', tema: '', idKelompok: '', isBooked: false },
             kelasTeori: confirmedBooking.kelasTeori || '',
             namaKelompok: confirmedBooking.namaKelompok || '',
             tema: confirmedBooking.tema || '',
             idKelompok: confirmedBooking.idKelompok || '',
             isBooked: true,
+            availableRoomsCount: 1,
+            room: confirmedBooking.room || 1,
           };
 
           const targetPayload: PresentationBookingPayload = {
@@ -1005,6 +1108,7 @@ export default function App() {
             tema: confirmedBooking.tema,
             idKelompok: confirmedBooking.idKelompok,
             email: confirmedBooking.email,
+            room: confirmedBooking.room || 1,
           };
 
           let wroteDirectly = false;
@@ -1038,6 +1142,7 @@ export default function App() {
                 sheetId: confirmedBooking.sheetId,
                 sheetName: confirmedBooking.sheetName,
                 rowNumber: confirmedBooking.rowNumber,
+                room: confirmedBooking.room || 1,
                 kelasTeori: confirmedBooking.kelasTeori,
                 namaKelompok: confirmedBooking.namaKelompok,
                 tema: confirmedBooking.tema,
@@ -1189,6 +1294,8 @@ export default function App() {
     const formSlug = params.get('form') || activeFormItem?.id || undefined;
     const effectiveSheetId = activeFormItem?.sheetId || config?.id || '';
     const effectiveSheetName = activeFormItem?.sheetName || config?.activeSheetName || 'Sheet1';
+    const targetRoom = payload.room || slot.availableRoom || 1;
+    payload.room = targetRoom;
 
     const persistToFirestore = async () => {
       if (effectiveSheetId) {
@@ -1197,6 +1304,7 @@ export default function App() {
           sheetId: effectiveSheetId,
           sheetName: effectiveSheetName,
           rowNumber: slot.rowNumber,
+          room: targetRoom,
           urutan: slot.urutan,
           hari: slot.hari,
           tanggal: slot.tanggal,
@@ -1257,6 +1365,7 @@ export default function App() {
         sheetId: effectiveSheetId,
         sheetName: effectiveSheetName,
         rowNumber: slot.rowNumber,
+        room: targetRoom,
         kelasTeori: payload.kelasTeori,
         namaKelompok: payload.namaKelompok,
         tema: payload.tema,
@@ -1284,13 +1393,17 @@ export default function App() {
       throw new Error('Silakan hubungkan Google Spreadsheet terlebih dahulu.');
     }
 
+    const targetRoom = payload.room || (slot.room1 && !slot.room1.isBooked ? 1 : 2);
+    const roomLabel = `Room ${targetRoom}`;
+
     return new Promise((resolve, reject) => {
       setConfirmationState({
         isOpen: true,
-        title: 'Konfirmasi Booking Presentasi',
-        description: `Anda akan memesan slot presentasi pada Baris ${slot.rowNumber} (Tab: ${config.activeSheetName}). Kolom Kelas Teori, Nama Kelompok, Tema, dan ID_Kelompok akan langsung diisi di Google Spreadsheet.`,
+        title: `Konfirmasi Booking Presentasi (${roomLabel})`,
+        description: `Anda akan memesan slot presentasi pada Baris ${slot.rowNumber} (${roomLabel}, Tab: ${config.activeSheetName}). Data kelompok akan langsung diisi di Google Spreadsheet.`,
         details: [
           { label: 'Sesi / Baris', value: `Urutan #${slot.urutan} (Baris ${slot.rowNumber})` },
+          { label: 'Ruangan', value: roomLabel },
           { label: 'Tab Sheet', value: config.activeSheetName },
           { label: 'Hari & Tanggal', value: `${slot.hari}, ${slot.tanggal}` },
           { label: 'Jam Presentasi', value: slot.jam },
@@ -1309,6 +1422,7 @@ export default function App() {
               sheetId: config.id,
               sheetName: config.activeSheetName,
               rowNumber: slot.rowNumber,
+              room: targetRoom,
               urutan: slot.urutan,
               hari: slot.hari,
               tanggal: slot.tanggal,
@@ -1320,7 +1434,7 @@ export default function App() {
               bookedByAdmin: true,
             });
 
-            await bookPresentationSlot(accessToken, config, slot, payload);
+            await bookPresentationSlot(accessToken, config, slot, { ...payload, room: targetRoom });
             setConfirmationState((prev) => ({ ...prev, isOpen: false }));
             await loadScheduleData(accessToken, config);
             resolve();
@@ -1335,29 +1449,35 @@ export default function App() {
   };
 
   // Admin Clear Booking (with Confirmation Dialog)
-  const handleClearBooking = async (slot: PresentationSlot) => {
+  const handleClearBooking = async (slot: PresentationSlot, room?: 1 | 2) => {
     if (!accessToken || !config) return;
+
+    const targetRoom = room || slot.room || 1;
+    const roomBookingData = targetRoom === 2 ? slot.room2 : slot.room1;
+    const groupName = roomBookingData?.namaKelompok || slot.namaKelompok;
+    const groupId = roomBookingData?.idKelompok || slot.idKelompok;
 
     setConfirmationState({
       isOpen: true,
-      title: 'Reset / Kosongkan Slot Presentasi',
-      description: `Ini akan menghapus data booking (${slot.namaKelompok}) pada Baris ${slot.rowNumber} di spreadsheet, sehingga slot presentasi ini kembali kosong.`,
+      title: `Reset / Kosongkan Slot Presentasi (Room ${targetRoom})`,
+      description: `Ini akan menghapus data booking (${groupName}) pada Baris ${slot.rowNumber} (Room ${targetRoom}) di spreadsheet, sehingga ruangan ini kembali kosong.`,
       details: [
         { label: 'Baris Spreadsheet', value: `Baris ${slot.rowNumber}` },
+        { label: 'Ruangan', value: `Room ${targetRoom}` },
         { label: 'Tab Sheet', value: config.activeSheetName },
         { label: 'Urutan', value: `Urutan #${slot.urutan}` },
         { label: 'Hari & Jam', value: `${slot.hari}, ${slot.jam}` },
-        { label: 'Kelompok Terdaftar', value: `${slot.namaKelompok} (${slot.idKelompok})` },
+        { label: 'Kelompok Terdaftar', value: `${groupName} (${groupId})` },
       ],
-      confirmButtonText: 'Ya, Kosongkan Slot',
+      confirmButtonText: `Ya, Kosongkan Room ${targetRoom}`,
       confirmButtonVariant: 'danger',
       onConfirm: async () => {
         setIsExecutingMutation(true);
         try {
           // Redundancy: Remove from Firestore database
-          await cancelBookingInFirestore(config.id, config.activeSheetName, slot.rowNumber);
+          await cancelBookingInFirestore(config.id, config.activeSheetName, slot.rowNumber, targetRoom);
 
-          await cancelPresentationBooking(accessToken, config, slot);
+          await cancelPresentationBooking(accessToken, config, slot, targetRoom);
           setConfirmationState((prev) => ({ ...prev, isOpen: false }));
           await loadScheduleData(accessToken, config);
         } catch (err) {

@@ -285,6 +285,7 @@ export interface BookingRecord {
   tema: string;
   idKelompok: string;
   email?: string;
+  room?: 1 | 2; // Room 1 (Cols E:H) or Room 2 (Cols I:L)
   bookedAt: number;
   status: 'pending' | 'confirmed' | 'cancelled';
   confirmToken?: string;
@@ -308,10 +309,10 @@ export const isValidUpnInformatikaEmail = (email: string, bypassMode = false): b
   return /^123\d{6}@student\.upnyk\.ac\.id$/i.test(clean);
 };
 
-export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number): string => {
+export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number, room: 1 | 2 = 1): string => {
   const cleanSheet = (sheetId || '').trim();
   const cleanTab = (sheetName || 'Sheet1').trim().replace(/[^a-zA-Z0-9-_]/g, '_');
-  return `${cleanSheet}_${cleanTab}_row${rowNumber}`;
+  return `${cleanSheet}_${cleanTab}_row${rowNumber}_room${room}`;
 };
 
 /**
@@ -327,7 +328,7 @@ export const isBookingActive = (booking: BookingRecord): boolean => {
 
 /**
  * Create a 15-minute temporary pending hold on a slot in Firestore.
- * Prevents race conditions and duplicates before email confirmation.
+ * Supports auto-fallback between Room 1 and Room 2.
  */
 export const createPendingBookingHold = async (
   booking: Omit<BookingRecord, 'id' | 'bookedAt' | 'status' | 'confirmToken' | 'expiresAt'>
@@ -336,47 +337,59 @@ export const createPendingBookingHold = async (
   bookingId: string;
   confirmToken?: string;
   expiresAt?: number;
+  room?: 1 | 2;
   error?: string;
 }> => {
   try {
-    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber);
-    const bookingRef = doc(db, 'bookings', docId);
+    const allBookings = await fetchBookingsFromFirestore(booking.sheetId, booking.sheetName);
+    const now = Date.now();
 
-    // Check existing booking doc
-    const existingSnap = await getDoc(bookingRef);
-    if (existingSnap.exists()) {
-      const existing = existingSnap.data() as BookingRecord;
-      if (existing.status === 'confirmed') {
+    // 1. Determine target room: use booking.room if passed, else auto-detect
+    let targetRoom: 1 | 2 = booking.room === 2 ? 2 : 1;
+    const cleanSheet = (booking.sheetId || '').trim();
+    const cleanTab = (booking.sheetName || 'Sheet1').trim().replace(/[^a-zA-Z0-9-_]/g, '_');
+    const legacyDocId = `${cleanSheet}_${cleanTab}_row${booking.rowNumber}`;
+
+    // Check existing bookings on this row in Firestore
+    const rowBookings = allBookings.filter((b) => b.rowNumber === booking.rowNumber && b.status !== 'cancelled' && isBookingActive(b));
+    const isR1Taken = rowBookings.some((b) => (b.room === 1 || !b.room || b.id.endsWith('_room1') || b.id === legacyDocId));
+    const isR2Taken = rowBookings.some((b) => (b.room === 2 || b.id.endsWith('_room2')));
+
+    if (targetRoom === 1 && isR1Taken) {
+      if (!isR2Taken) {
+        // Auto-switch to Room 2
+        targetRoom = 2;
+      } else {
         return {
           success: false,
-          bookingId: docId,
-          error: `Slot ini telah resmi dibooking oleh ${existing.namaKelompok}. Silakan pilih slot lain.`,
+          bookingId: '',
+          error: `Kedua ruangan (Room 1 & Room 2) pada sesi waktu ini sudah penuh atau sedang di-hold. Silakan pilih sesi lain.`,
         };
       }
-      if (existing.status === 'pending' && existing.expiresAt && Date.now() < existing.expiresAt) {
-        // Still within 15 min hold by another user
-        const remainingSeconds = Math.ceil((existing.expiresAt - Date.now()) / 1000);
-        const remainingMins = Math.ceil(remainingSeconds / 60);
+    } else if (targetRoom === 2 && isR2Taken) {
+      if (!isR1Taken) {
+        targetRoom = 1;
+      } else {
         return {
           success: false,
-          bookingId: docId,
-          error: `Slot ini sedang ditahan sementara oleh kelompok lain (menunggu konfirmasi email, sisa ~${remainingMins} menit).`,
+          bookingId: '',
+          error: `Kedua ruangan pada sesi waktu ini sudah penuh. Silakan pilih sesi lain.`,
         };
       }
     }
 
-    // Query all bookings in Firestore for this sheet to enforce uniqueness
-    const allBookings = await fetchBookingsFromFirestore(booking.sheetId, booking.sheetName);
-    const now = Date.now();
+    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber, targetRoom);
+    const bookingRef = doc(db, 'bookings', docId);
+
+    // 2. Uniqueness Validations across all bookings
     const cleanEmail = (booking.email || '').trim().toLowerCase();
     const cleanId = (booking.idKelompok || '').trim().toLowerCase();
 
-    // 1. Validation Rule: Email hanya boleh digunakan sekali
+    // Rule 1: Email hanya boleh digunakan sekali
     if (cleanEmail) {
       const emailConflict = allBookings.find((b) => {
-        if (b.rowNumber === booking.rowNumber) return false;
-        if (b.status === 'cancelled') return false;
-        if (b.status === 'pending' && (!b.expiresAt || now >= b.expiresAt)) return false;
+        if (b.rowNumber === booking.rowNumber && (b.room === targetRoom || b.id === docId)) return false;
+        if (!isBookingActive(b)) return false;
         const bEmail = (b.email || '').trim().toLowerCase();
         return bEmail === cleanEmail;
       });
@@ -390,12 +403,11 @@ export const createPendingBookingHold = async (
       }
     }
 
-    // 2. Validation Rule: ID hanya boleh muncul satu kali
+    // Rule 2: ID hanya boleh muncul satu kali
     if (cleanId) {
       const idConflict = allBookings.find((b) => {
-        if (b.rowNumber === booking.rowNumber) return false;
-        if (b.status === 'cancelled') return false;
-        if (b.status === 'pending' && (!b.expiresAt || now >= b.expiresAt)) return false;
+        if (b.rowNumber === booking.rowNumber && (b.room === targetRoom || b.id === docId)) return false;
+        if (!isBookingActive(b)) return false;
         const bId = (b.idKelompok || '').trim().toLowerCase();
         return bId === cleanId;
       });
@@ -417,6 +429,7 @@ export const createPendingBookingHold = async (
 
     const data: BookingRecord = {
       ...booking,
+      room: targetRoom,
       id: docId,
       status: 'pending',
       confirmToken,
@@ -431,6 +444,7 @@ export const createPendingBookingHold = async (
       bookingId: docId,
       confirmToken,
       expiresAt,
+      room: targetRoom,
     };
   } catch (err) {
     console.error('Error creating pending booking hold in Firestore:', err);
@@ -563,13 +577,16 @@ export const getBookingById = async (bookingId: string): Promise<BookingRecord |
 export const saveBookingToFirestore = async (
   booking: Omit<BookingRecord, 'id' | 'bookedAt' | 'status'> & {
     status?: 'pending' | 'confirmed' | 'cancelled';
+    room?: 1 | 2;
   }
 ): Promise<void> => {
   try {
-    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber);
+    const targetRoom = booking.room === 2 ? 2 : 1;
+    const docId = getBookingDocId(booking.sheetId, booking.sheetName, booking.rowNumber, targetRoom);
     const bookingRef = doc(db, 'bookings', docId);
     const data: BookingRecord = {
       ...booking,
+      room: targetRoom,
       id: docId,
       status: booking.status || 'confirmed',
       bookedAt: Date.now(),
@@ -586,12 +603,25 @@ export const saveBookingToFirestore = async (
 export const cancelBookingInFirestore = async (
   sheetId: string,
   sheetName: string,
-  rowNumber: number
+  rowNumber: number,
+  room?: 1 | 2
 ): Promise<void> => {
   try {
-    const docId = getBookingDocId(sheetId, sheetName, rowNumber);
-    const bookingRef = doc(db, 'bookings', docId);
-    await deleteDoc(bookingRef);
+    if (room) {
+      const docId = getBookingDocId(sheetId, sheetName, rowNumber, room);
+      await deleteDoc(doc(db, 'bookings', docId)).catch(() => {});
+    } else {
+      const r1 = getBookingDocId(sheetId, sheetName, rowNumber, 1);
+      const r2 = getBookingDocId(sheetId, sheetName, rowNumber, 2);
+      const cleanSheet = (sheetId || '').trim();
+      const cleanTab = (sheetName || 'Sheet1').trim().replace(/[^a-zA-Z0-9-_]/g, '_');
+      const legacy = `${cleanSheet}_${cleanTab}_row${rowNumber}`;
+      await Promise.all([
+        deleteDoc(doc(db, 'bookings', r1)).catch(() => {}),
+        deleteDoc(doc(db, 'bookings', r2)).catch(() => {}),
+        deleteDoc(doc(db, 'bookings', legacy)).catch(() => {}),
+      ]);
+    }
   } catch (err) {
     console.warn('Error cancelling booking in Firestore:', err);
   }

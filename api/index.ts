@@ -382,7 +382,7 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
       return;
     }
 
-    const encodedRange = encodeURIComponent(`'${sheetName}'!A${startRow}:H600`);
+    const encodedRange = encodeURIComponent(`'${sheetName}'!A${startRow}:L600`);
     const googleRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${encodedRange}?valueRenderOption=FORMATTED_VALUE`,
       {
@@ -415,25 +415,62 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
       const hari = (row[1] || '').toString().trim();
       const tanggal = (row[2] || '').toString().trim();
       const jam = (row[3] || '').toString().trim();
-      const kelasTeori = (row[4] || '').toString().trim();
-      const namaKelompok = (row[5] || '').toString().trim();
-      const tema = (row[6] || '').toString().trim();
-      const idKelompok = (row[7] || '').toString().trim();
 
-      const isBooked = Boolean(namaKelompok || idKelompok);
+      // Room 1 (Columns E:H, indices 4..7)
+      const r1Kelas = (row[4] || '').toString().trim();
+      const r1Nama = (row[5] || '').toString().trim();
+      const r1Tema = (row[6] || '').toString().trim();
+      const r1Id = (row[7] || '').toString().trim();
+      const isRoom1Booked = Boolean(r1Nama || r1Id);
 
-      if (hari || tanggal || jam || isBooked) {
+      // Room 2 (Columns I:L, indices 8..11)
+      const r2Kelas = (row[8] || '').toString().trim();
+      const r2Nama = (row[9] || '').toString().trim();
+      const r2Tema = (row[10] || '').toString().trim();
+      const r2Id = (row[11] || '').toString().trim();
+      const isRoom2Booked = Boolean(r2Nama || r2Id);
+
+      // Available room auto-fill: Room 1 first if free, else Room 2
+      const availableRoom: 1 | 2 | undefined = !isRoom1Booked ? 1 : !isRoom2Booked ? 2 : undefined;
+      const availableRoomsCount = (!isRoom1Booked ? 1 : 0) + (!isRoom2Booked ? 1 : 0);
+
+      // Session is booked ONLY when BOTH rooms are occupied
+      const isBooked = isRoom1Booked && isRoom2Booked;
+
+      const displayKelas = isRoom1Booked ? r1Kelas : isRoom2Booked ? r2Kelas : '';
+      const displayNama = isRoom1Booked ? r1Nama : isRoom2Booked ? r2Nama : '';
+      const displayTema = isRoom1Booked ? r1Tema : isRoom2Booked ? r2Tema : '';
+      const displayId = isRoom1Booked ? r1Id : isRoom2Booked ? r2Id : '';
+
+      if (hari || tanggal || jam || isRoom1Booked || isRoom2Booked) {
         slots.push({
           rowNumber: currentRowNumber,
           urutan: urutan || `${slots.length + 1}`,
           hari,
           tanggal,
           jam,
-          kelasTeori,
-          namaKelompok,
-          tema,
-          idKelompok,
+          room1: {
+            kelasTeori: r1Kelas,
+            namaKelompok: r1Nama,
+            tema: r1Tema,
+            idKelompok: r1Id,
+            isBooked: isRoom1Booked,
+          },
+          room2: {
+            kelasTeori: r2Kelas,
+            namaKelompok: r2Nama,
+            tema: r2Tema,
+            idKelompok: r2Id,
+            isBooked: isRoom2Booked,
+          },
+          kelasTeori: displayKelas,
+          namaKelompok: displayNama,
+          tema: displayTema,
+          idKelompok: displayId,
           isBooked,
+          availableRoom,
+          availableRoomsCount,
+          room: availableRoom || 1,
         });
       }
     }
@@ -519,8 +556,12 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       return;
     }
 
-    // Check whether columns E:H (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok) already have content
-    const checkRange = encodeURIComponent(`'${targetSheetName}'!E${rowNumber}:H${rowNumber}`);
+    let targetRoom: 1 | 2 = Number(req.body.room) === 2 ? 2 : 1;
+    let colStart = targetRoom === 2 ? 'I' : 'E';
+    let colEnd = targetRoom === 2 ? 'L' : 'H';
+
+    // Check whether the target room columns already have content
+    const checkRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
     const checkRes = await fetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${checkRange}`,
       {
@@ -537,27 +578,45 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       const hasContent = Boolean(exKelas || exNama || exTema || exId);
 
       if (hasContent) {
-        const details = [
-          exNama ? `Kelompok: ${exNama}` : '',
-          exId ? `ID: ${exId}` : '',
-          exKelas ? `Kelas: ${exKelas}` : '',
-          exTema ? `Tema: ${exTema}` : '',
-        ]
-          .filter(Boolean)
-          .join(', ');
-
-        res.status(409).json({
-          error: `Slot pada baris ${rowNumber} sudah terisi di spreadsheet (${details || 'Sudah ada data'}). Penulisan dibatalkan untuk mencegah penimpaan data.`,
-          alreadyOccupied: true,
-        });
-        return;
+        // If Room 1 was full, check if Room 2 is available!
+        if (targetRoom === 1) {
+          const r2CheckRange = encodeURIComponent(`'${targetSheetName}'!I${rowNumber}:L${rowNumber}`);
+          const r2Res = await fetch(
+            `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${r2CheckRange}`,
+            { headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (r2Res.ok) {
+            const r2Data = await r2Res.json();
+            const r2Values = (r2Data.values?.[0] || []).map((v: unknown) =>
+              v !== undefined && v !== null ? v.toString().trim() : ''
+            );
+            if (!r2Values.some(Boolean)) {
+              // Auto-fallback to Room 2
+              targetRoom = 2;
+              colStart = 'I';
+              colEnd = 'L';
+            } else {
+              res.status(409).json({
+                error: `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan.`,
+                alreadyOccupied: true,
+              });
+              return;
+            }
+          }
+        } else {
+          res.status(409).json({
+            error: `Room 2 pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan.`,
+            alreadyOccupied: true,
+          });
+          return;
+        }
       }
     }
 
-    // Check if ID_Kelompok already exists in another row in Google Sheet (Rule 2: ID hanya boleh muncul 1 kali)
+    // Check if ID_Kelompok already exists in another row in Google Sheet across Room 1 (H) and Room 2 (L)
     if (idKelompok && idKelompok.toString().trim()) {
       const targetId = idKelompok.toString().trim().toLowerCase();
-      const allIdRange = encodeURIComponent(`'${targetSheetName}'!H54:H600`);
+      const allIdRange = encodeURIComponent(`'${targetSheetName}'!H54:L600`);
       const allIdRes = await fetch(
         `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${allIdRange}`,
         { headers: { Authorization: `Bearer ${token}` } }
@@ -567,8 +626,10 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
         const rows = idData.values || [];
         for (let idx = 0; idx < rows.length; idx++) {
           const actualRow = 54 + idx;
-          const cellVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase();
-          if (cellVal && cellVal === targetId && actualRow !== rowNumber) {
+          const r1IdVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase(); // Col H
+          const r2IdVal = (rows[idx]?.[4] || '').toString().trim().toLowerCase(); // Col L (offset 4 from H)
+          if ((r1IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 1)) ||
+              (r2IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 2))) {
             res.status(409).json({
               error: `ID Kelompok "${idKelompok.toString().trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
               duplicateId: true,
@@ -579,7 +640,7 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       }
     }
 
-    // Write Columns E:H (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok)
+    // Write Columns for target room (Room 1: E-H, Room 2: I-L)
     const values = [
       [
         (kelasTeori || '').toString().trim(),
@@ -589,7 +650,7 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       ],
     ];
 
-    const updateRange = encodeURIComponent(`'${targetSheetName}'!E${rowNumber}:H${rowNumber}`);
+    const updateRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
     const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${updateRange}?valueInputOption=USER_ENTERED`;
 
     const writeRes = await fetch(updateUrl, {
@@ -634,14 +695,15 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
             res.json({
               success: true,
               rowNumber,
-              message: 'Booking presentasi berhasil disimpan ke Google Sheet (via sesi owner)',
+              room: targetRoom,
+              message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom}, via sesi owner)`,
             });
             return;
           }
         }
 
         res.status(400).json({
-          error: `Google Sheets menolak penulisan karena sel/sheet dilindungi (Protected Range). Pastikan kolom E:H tidak dikunci atau berikan izin edit ke Service Account robot. (${rawMsg})`,
+          error: `Google Sheets menolak penulisan karena sel/sheet dilindungi (Protected Range). Pastikan kolom E:L tidak dikunci atau berikan izin edit ke Service Account robot. (${rawMsg})`,
           isProtectedCell: true,
         });
         return;
@@ -656,7 +718,8 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
     res.json({
       success: true,
       rowNumber,
-      message: 'Booking presentasi berhasil disimpan ke Google Sheet',
+      room: targetRoom,
+      message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom})`,
     });
   } catch (error: unknown) {
     console.error('Error in public booking:', error);

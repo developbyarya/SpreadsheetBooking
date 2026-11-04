@@ -359,12 +359,15 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       return;
     }
 
+    const targetRoom = selectedSlot.availableRoom || 1;
+
     const payload: PresentationBookingPayload = {
       kelasTeori: kelasTeori.trim(),
       idKelompok: idKelompok.trim(),
       namaKelompok: namaKelompok.trim(),
       tema: tema.trim(),
       email: cleanEmail,
+      room: targetRoom,
     };
 
     setIsSubmitting(true);
@@ -402,6 +405,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         sheetName: effectiveSheetName,
         formId: formId,
         rowNumber: selectedSlot.rowNumber,
+        room: targetRoom,
         urutan: selectedSlot.urutan,
         hari: selectedSlot.hari,
         tanggal: selectedSlot.tanggal,
@@ -434,6 +438,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
             tanggal: selectedSlot.tanggal,
             jam: selectedSlot.jam,
             urutan: selectedSlot.urutan,
+            room: holdRes.room || targetRoom,
             kelasTeori: payload.kelasTeori,
             namaKelompok: payload.namaKelompok,
             idKelompok: payload.idKelompok,
@@ -541,8 +546,9 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
   // Google Calendar URL
   const getGoogleCalendarUrl = (slot: PresentationSlot, payload: PresentationBookingPayload) => {
-    const title = `Presentasi: ${payload.namaKelompok} (${payload.idKelompok})`;
-    const details = `Jadwal Presentasi:\nUrutan: ${slot.urutan}\nHari: ${slot.hari}\nTanggal: ${slot.tanggal}\nJam: ${slot.jam}\nKelas: ${payload.kelasTeori}\nTema: ${payload.tema}\nEmail: ${payload.email || '-'}\n\nTercatat di Google Spreadsheet.`;
+    const roomNum = payload.room || slot.availableRoom || 1;
+    const title = `Presentasi: ${payload.namaKelompok} (${payload.idKelompok}) - Room ${roomNum}`;
+    const details = `Jadwal Presentasi:\nUrutan: ${slot.urutan}\nRuangan: Room ${roomNum}\nHari: ${slot.hari}\nTanggal: ${slot.tanggal}\nJam: ${slot.jam}\nKelas: ${payload.kelasTeori}\nTema: ${payload.tema}\nEmail: ${payload.email || '-'}\n\nTercatat di Google Spreadsheet.`;
     const params = new URLSearchParams({
       action: 'TEMPLATE',
       text: title,
@@ -553,14 +559,15 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
 
   // Download .ics
   const downloadIcs = (slot: PresentationSlot, payload: PresentationBookingPayload) => {
+    const roomNum = payload.room || slot.availableRoom || 1;
     const icsContent = [
       'BEGIN:VCALENDAR',
       'VERSION:2.0',
-      'PRODID:-//SlotSync//Jadwal Presentasi//EN',
+      'PRODID:-//SlotSync//Booking Presentasi Data Science//EN',
       'BEGIN:VEVENT',
       `UID:pres-${slot.rowNumber}-${Date.now()}@slotsync.local`,
-      `SUMMARY:Presentasi ${payload.namaKelompok} (${payload.idKelompok})`,
-      `DESCRIPTION:Urutan ${slot.urutan}, Jam: ${slot.jam}, Kelas: ${payload.kelasTeori}, Tema: ${payload.tema}`,
+      `SUMMARY:Presentasi ${payload.namaKelompok} (${payload.idKelompok}) - Room ${roomNum}`,
+      `DESCRIPTION:Urutan ${slot.urutan}, Room: ${roomNum}, Jam: ${slot.jam}, Kelas: ${payload.kelasTeori}, Tema: ${payload.tema}`,
       'STATUS:CONFIRMED',
       'END:VEVENT',
       'END:VCALENDAR',
@@ -673,9 +680,9 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
               <div className="flex items-center gap-3 pt-2 border-t border-slate-200/60">
                 <Clock className="w-5 h-5 text-emerald-600" />
                 <div>
-                  <p className="text-xs text-slate-500 font-medium">Jam Presentasi</p>
+                  <p className="text-xs text-slate-500 font-medium">Jam & Ruangan</p>
                   <p className="text-sm font-semibold text-slate-800 font-mono">
-                    {bookingSuccess.slot.jam}
+                    {bookingSuccess.slot.jam} &bull; <span className="text-emerald-700 font-sans font-bold">Room {bookingSuccess.payload.room || 1}</span>
                   </p>
                 </div>
               </div>
@@ -960,6 +967,16 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                           <div className="flex items-center gap-2 text-xs font-mono font-medium text-slate-600">
                             <Clock className="w-3.5 h-3.5 text-emerald-600" />
                             <span>{slot.jam}</span>
+                            <span className="text-slate-300">&bull;</span>
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-sans font-semibold ${
+                              slot.availableRoomsCount === 2
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}>
+                              {slot.availableRoomsCount === 2
+                                ? '2 Room Kosong'
+                                : `Sisa Room ${slot.availableRoom || 1}`}
+                            </span>
                           </div>
                         </div>
 
@@ -1335,7 +1352,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                         {selectedSlot.hari ? `${selectedSlot.hari}, ` : ''}{selectedSlot.tanggal}
                       </p>
                       <p className="text-xs font-mono font-semibold text-emerald-700">
-                        {selectedSlot.jam} (Urutan #{selectedSlot.urutan})
+                        {selectedSlot.jam} (Urutan #{selectedSlot.urutan}) &bull; Room {selectedSlot.availableRoom || 1}
                       </p>
                     </div>
                     <button
@@ -1349,6 +1366,13 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                 )}
 
                 <div className="divide-y divide-slate-100 text-sm space-y-3 pt-1">
+                  <div className="flex justify-between items-center pt-2">
+                    <span className="text-slate-500 font-medium">Alokasi Ruangan:</span>
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">
+                      Room {selectedSlot?.availableRoom || 1}
+                    </span>
+                  </div>
+
                   <div className="flex justify-between items-center pt-2">
                     <span className="text-slate-500 font-medium">Email Mahasiswa:</span>
                     <span className="font-bold font-mono text-emerald-800">{studentEmail}</span>

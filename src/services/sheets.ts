@@ -12,20 +12,42 @@
  * Column H (8): ID_Kelompok   (Booking item)
  */
 
+export interface RoomBooking {
+  kelasTeori: string;
+  namaKelompok: string;
+  tema: string;
+  idKelompok: string;
+  email?: string;
+  isBooked: boolean;
+  isHeld?: boolean;
+  heldExpiresAt?: number;
+}
+
 export interface PresentationSlot {
   rowNumber: number; // 1-indexed row in the sheet (>= 54)
   urutan: string; // Column A (Urutan / Sequence)
   hari: string; // Column B (Hari, e.g. "Senin", "Selasa")
   tanggal: string; // Column C (Tanggal, e.g. "2026-11-03" or "3 November 2026")
   jam: string; // Column D (Jam, e.g. "08:00 - 08:30")
-  kelasTeori: string; // Column E (Kelas Teori)
-  namaKelompok: string; // Column F (Nama Kelompok)
-  tema: string; // Column G (Tema / Topik Presentasi)
-  idKelompok: string; // Column H (ID_Kelompok)
-  email?: string; // Student verification email
-  isBooked: boolean; // True if namaKelompok or idKelompok is not empty
+
+  // Room 1 (Columns E:H) & Room 2 (Columns I:L)
+  room1: RoomBooking;
+  room2: RoomBooking;
+
+  // Active or auto-assigned room details for backwards compatibility & display:
+  kelasTeori: string;
+  namaKelompok: string;
+  tema: string;
+  idKelompok: string;
+  email?: string;
+  room?: 1 | 2; // Auto-assigned or selected room (1 or 2)
+
+  isBooked: boolean; // True ONLY IF BOTH rooms are booked!
   isHeld?: boolean; // True if temporarily held for email confirmation (15 mins)
   heldExpiresAt?: number;
+
+  availableRoom?: 1 | 2; // Next available room to fill: 1 if room1 empty, else 2 if room2 empty, else undefined
+  availableRoomsCount: number; // 0, 1, or 2
 }
 
 export interface PresentationBookingPayload {
@@ -34,6 +56,7 @@ export interface PresentationBookingPayload {
   tema: string;
   idKelompok: string;
   email?: string;
+  room?: 1 | 2;
 }
 
 export interface CustomForm {
@@ -134,9 +157,8 @@ export async function fetchPresentationSlots(
 ): Promise<PresentationSlot[]> {
   const { id, activeSheetName, startRow = 54 } = config;
 
-  // Read range A{startRow}:H (e.g. 'Sheet1'!A54:H500)
-  // Also read headers if around row 53 to auto-confirm
-  const encodedRange = encodeURIComponent(`'${activeSheetName}'!A${startRow}:H600`);
+  // Read range A{startRow}:L (Urutan A-D, Room 1 E-H, Room 2 I-L)
+  const encodedRange = encodeURIComponent(`'${activeSheetName}'!A${startRow}:L600`);
 
   const response = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${encodedRange}?valueRenderOption=FORMATTED_VALUE`,
@@ -161,7 +183,7 @@ export async function fetchPresentationSlots(
     const row = rows[i];
     const currentRowNumber = startRow + i;
 
-    // Check if row has at least some content (Hari, Tanggal, or Jam or Urutan)
+    // Check if row has at least some content (Hari, Tanggal, Jam, Urutan, or Group Data)
     if (!row || row.length === 0 || !row.some((c) => c && c.toString().trim().length > 0)) {
       continue;
     }
@@ -170,27 +192,64 @@ export async function fetchPresentationSlots(
     const hari = (row[1] || '').toString().trim();
     const tanggal = (row[2] || '').toString().trim();
     const jam = (row[3] || '').toString().trim();
-    const kelasTeori = (row[4] || '').toString().trim();
-    const namaKelompok = (row[5] || '').toString().trim();
-    const tema = (row[6] || '').toString().trim();
-    const idKelompok = (row[7] || '').toString().trim();
 
-    // Determine if booked: if Nama Kelompok or ID_Kelompok is filled
-    const isBooked = Boolean(namaKelompok || idKelompok);
+    // Room 1 (Columns E - H)
+    const r1Kelas = (row[4] || '').toString().trim();
+    const r1Nama = (row[5] || '').toString().trim();
+    const r1Tema = (row[6] || '').toString().trim();
+    const r1Id = (row[7] || '').toString().trim();
+    const isRoom1Booked = Boolean(r1Nama || r1Id);
+
+    // Room 2 (Columns I - L)
+    const r2Kelas = (row[8] || '').toString().trim();
+    const r2Nama = (row[9] || '').toString().trim();
+    const r2Tema = (row[10] || '').toString().trim();
+    const r2Id = (row[11] || '').toString().trim();
+    const isRoom2Booked = Boolean(r2Nama || r2Id);
+
+    // Available room: fills Room 1 first if free, else Room 2
+    const availableRoom: 1 | 2 | undefined = !isRoom1Booked ? 1 : !isRoom2Booked ? 2 : undefined;
+    const availableRoomsCount = (!isRoom1Booked ? 1 : 0) + (!isRoom2Booked ? 1 : 0);
+
+    // Session is booked ONLY when BOTH rooms are occupied
+    const isBooked = isRoom1Booked && isRoom2Booked;
+
+    // For display / backwards compatibility: use room 1 if booked, else room 2, else empty
+    const displayKelas = isRoom1Booked ? r1Kelas : isRoom2Booked ? r2Kelas : '';
+    const displayNama = isRoom1Booked ? r1Nama : isRoom2Booked ? r2Nama : '';
+    const displayTema = isRoom1Booked ? r1Tema : isRoom2Booked ? r2Tema : '';
+    const displayId = isRoom1Booked ? r1Id : isRoom2Booked ? r2Id : '';
 
     // Only include rows that have either date, day, or time defined
-    if (hari || tanggal || jam || isBooked) {
+    if (hari || tanggal || jam || isRoom1Booked || isRoom2Booked) {
       slots.push({
         rowNumber: currentRowNumber,
         urutan: urutan || `${slots.length + 1}`,
         hari,
         tanggal,
         jam,
-        kelasTeori,
-        namaKelompok,
-        tema,
-        idKelompok,
+        room1: {
+          kelasTeori: r1Kelas,
+          namaKelompok: r1Nama,
+          tema: r1Tema,
+          idKelompok: r1Id,
+          isBooked: isRoom1Booked,
+        },
+        room2: {
+          kelasTeori: r2Kelas,
+          namaKelompok: r2Nama,
+          tema: r2Tema,
+          idKelompok: r2Id,
+          isBooked: isRoom2Booked,
+        },
+        kelasTeori: displayKelas,
+        namaKelompok: displayNama,
+        tema: displayTema,
+        idKelompok: displayId,
         isBooked,
+        availableRoom,
+        availableRoomsCount,
+        room: availableRoom || 1,
       });
     }
   }
@@ -199,8 +258,8 @@ export async function fetchPresentationSlots(
 }
 
 /**
- * Books a presentation slot by updating columns E:H (Kelas Teori, Nama Kelompok, Tema, ID_Kelompok)
- * for the specific rowNumber in the user's spreadsheet.
+ * Books a presentation slot in Room 1 (Cols E:H) or Room 2 (Cols I:L)
+ * automatically picking the open room.
  */
 export async function bookPresentationSlot(
   accessToken: string,
@@ -211,9 +270,13 @@ export async function bookPresentationSlot(
   const { id, activeSheetName } = config;
   const rowNumber = slot.rowNumber;
 
-  // 1. Check if columns E:H already have content before writing (prevent overwrite)
-  const checkRange = encodeURIComponent(`'${activeSheetName}'!E${rowNumber}:H${rowNumber}`);
-  const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${checkRange}`;
+  let targetRoom: 1 | 2 = booking.room || slot.availableRoom || 1;
+
+  // 1. Check if the target room columns already have content before writing (prevent overwrite)
+  let colStart = targetRoom === 2 ? 'I' : 'E';
+  let colEnd = targetRoom === 2 ? 'L' : 'H';
+  let checkRange = encodeURIComponent(`'${activeSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
+  let checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${checkRange}`;
 
   try {
     const checkResponse = await fetch(checkUrl, {
@@ -231,20 +294,37 @@ export async function bookPresentationSlot(
       const hasContent = Boolean(exKelas || exNama || exTema || exId);
 
       if (hasContent) {
-        const details = [
-          exNama ? `Kelompok: ${exNama}` : '',
-          exId ? `ID: ${exId}` : '',
-          exKelas ? `Kelas: ${exKelas}` : '',
-          exTema ? `Tema: ${exTema}` : '',
-        ]
-          .filter(Boolean)
-          .join(', ');
-
-        const error = new Error(
-          `Slot pada baris ${rowNumber} sudah terisi di Google Spreadsheet (${details || 'Sudah ada data'}). Penulisan dibatalkan untuk mencegah penimpaan data.`
-        ) as Error & { isSlotOccupied?: boolean };
-        error.isSlotOccupied = true;
-        throw error;
+        // If target was room 1, try checking if room 2 is free!
+        if (targetRoom === 1) {
+          const r2CheckRange = encodeURIComponent(`'${activeSheetName}'!I${rowNumber}:L${rowNumber}`);
+          const r2Res = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${r2CheckRange}`, {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+          if (r2Res.ok) {
+            const r2Data = await r2Res.json();
+            const r2Values = (r2Data.values?.[0] || []).map((v: unknown) =>
+              v !== undefined && v !== null ? String(v).trim() : ''
+            );
+            if (!r2Values.some(Boolean)) {
+              // Room 2 is completely free! Auto-fallback to Room 2
+              targetRoom = 2;
+              colStart = 'I';
+              colEnd = 'L';
+            } else {
+              const error = new Error(
+                `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di Google Spreadsheet. Penulisan dibatalkan.`
+              ) as Error & { isSlotOccupied?: boolean };
+              error.isSlotOccupied = true;
+              throw error;
+            }
+          }
+        } else {
+          const error = new Error(
+            `Room 2 pada baris ${rowNumber} sudah terisi di Google Spreadsheet. Penulisan dibatalkan.`
+          ) as Error & { isSlotOccupied?: boolean };
+          error.isSlotOccupied = true;
+          throw error;
+        }
       }
     }
   } catch (checkErr: unknown) {
@@ -254,10 +334,10 @@ export async function bookPresentationSlot(
     console.warn('Note checking slot occupancy:', checkErr);
   }
 
-  // 2. Check if ID_Kelompok already exists in another row in Google Sheet (Rule: ID hanya boleh muncul 1 kali)
+  // 2. Check if ID_Kelompok already exists in any row in Google Sheet across Room 1 (H) and Room 2 (L)
   if (booking.idKelompok && booking.idKelompok.trim()) {
     const cleanId = booking.idKelompok.trim().toLowerCase();
-    const idRange = encodeURIComponent(`'${activeSheetName}'!H54:H600`);
+    const idRange = encodeURIComponent(`'${activeSheetName}'!H54:L600`);
     const idCheckUrl = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${idRange}`;
     try {
       const idRes = await fetch(idCheckUrl, {
@@ -268,8 +348,11 @@ export async function bookPresentationSlot(
         const rows: string[][] = idData.values || [];
         for (let idx = 0; idx < rows.length; idx++) {
           const actualRow = 54 + idx;
-          const cellVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase();
-          if (cellVal && cellVal === cleanId && actualRow !== rowNumber) {
+          const r1IdVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase(); // Col H
+          const r2IdVal = (rows[idx]?.[4] || '').toString().trim().toLowerCase(); // Col L (index 4 from H)
+
+          if ((r1IdVal === cleanId && (actualRow !== rowNumber || targetRoom !== 1)) ||
+              (r2IdVal === cleanId && (actualRow !== rowNumber || targetRoom !== 2))) {
             const duplicateError = new Error(
               `ID Kelompok "${booking.idKelompok.trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`
             ) as Error & { isDuplicateId?: boolean };
@@ -286,7 +369,7 @@ export async function bookPresentationSlot(
     }
   }
 
-  // 3. Write Columns E (5) to H (8): [Kelas Teori, Nama Kelompok, Tema, ID_Kelompok]
+  // 3. Write Columns to target room (Room 1: E-H, Room 2: I-L)
   const values = [
     [
       booking.kelasTeori.trim(),
@@ -296,7 +379,7 @@ export async function bookPresentationSlot(
     ],
   ];
 
-  const updateRange = encodeURIComponent(`'${activeSheetName}'!E${rowNumber}:H${rowNumber}`);
+  const updateRange = encodeURIComponent(`'${activeSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${updateRange}?valueInputOption=USER_ENTERED`;
 
   const response = await fetch(url, {
@@ -315,19 +398,22 @@ export async function bookPresentationSlot(
 }
 
 /**
- * Cancels a presentation booking by clearing columns E:H for that rowNumber
+ * Cancels a presentation booking by clearing room columns (Room 1: E:H, Room 2: I:L)
  */
 export async function cancelPresentationBooking(
   accessToken: string,
   config: SpreadsheetConfig,
-  slot: PresentationSlot
+  slot: PresentationSlot,
+  room?: 1 | 2
 ): Promise<void> {
   const { id, activeSheetName } = config;
   const rowNumber = slot.rowNumber;
+  const targetRoom = room || slot.room || 1;
+  const colStart = targetRoom === 2 ? 'I' : 'E';
+  const colEnd = targetRoom === 2 ? 'L' : 'H';
 
-  // Clear columns E:H
   const values = [['', '', '', '']];
-  const updateRange = encodeURIComponent(`'${activeSheetName}'!E${rowNumber}:H${rowNumber}`);
+  const updateRange = encodeURIComponent(`'${activeSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${id}/values/${updateRange}?valueInputOption=USER_ENTERED`;
 
   const response = await fetch(url, {
