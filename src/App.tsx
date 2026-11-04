@@ -567,6 +567,11 @@ export default function App() {
       return updated;
     });
 
+    // Update activeFormItem if this form is currently being viewed
+    if (!activeFormItem || activeFormItem.id === newForm.id) {
+      setActiveFormItem(newForm);
+    }
+
     // If currently on this form, update config
     if (config && config.id === newForm.sheetId) {
       setConfig((prev) =>
@@ -656,6 +661,25 @@ export default function App() {
         const firestoreForms = await fetchFormsFromFirestore();
         if (firestoreForms && firestoreForms.length > 0) {
           activeForm = firestoreForms.find((f) => f.id === 'default') || firestoreForms[0];
+        }
+      }
+
+      // If not found in Firestore, try /api/forms as backup
+      if (!activeForm) {
+        try {
+          const formsRes = await fetch('/api/forms');
+          if (formsRes.ok) {
+            const formsData = await formsRes.json();
+            if (formsData.forms && formsData.forms.length > 0) {
+              if (formSlug) {
+                activeForm = formsData.forms.find((f: CustomForm) => f.id === formSlug) || null;
+              } else {
+                activeForm = formsData.forms.find((f: CustomForm) => f.id === 'default') || formsData.forms[0];
+              }
+            }
+          }
+        } catch (e) {
+          console.warn('Backup fetch /api/forms failed:', e);
         }
       }
 

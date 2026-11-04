@@ -164,6 +164,10 @@ export const fetchFormsFromFirestore = async (): Promise<CustomForm[]> => {
         sheetName: data.sheetName || 'Sheet1',
         startRow: Number(data.startRow) || 54,
         createdAt: data.createdAt || Date.now(),
+        closedAt: data.closedAt || null,
+        openAt: data.openAt || null,
+        isClosed: Boolean(data.isClosed),
+        closedMessage: data.closedMessage || '',
       });
     });
     return forms;
@@ -183,6 +187,10 @@ export const fetchFormsFromFirestore = async (): Promise<CustomForm[]> => {
           sheetName: data.sheetName || 'Sheet1',
           startRow: Number(data.startRow) || 54,
           createdAt: data.createdAt || Date.now(),
+          closedAt: data.closedAt || null,
+          openAt: data.openAt || null,
+          isClosed: Boolean(data.isClosed),
+          closedMessage: data.closedMessage || '',
         });
       });
       return forms.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
@@ -210,6 +218,10 @@ export const fetchFormByIdFromFirestore = async (formId: string): Promise<Custom
         sheetName: data.sheetName || 'Sheet1',
         startRow: Number(data.startRow) || 54,
         createdAt: data.createdAt || Date.now(),
+        closedAt: data.closedAt || null,
+        openAt: data.openAt || null,
+        isClosed: Boolean(data.isClosed),
+        closedMessage: data.closedMessage || '',
       };
     }
     return null;
