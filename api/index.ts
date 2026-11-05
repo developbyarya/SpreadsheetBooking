@@ -504,6 +504,28 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
   }
 });
 
+// Concurrency Mutex map to serialize simultaneous write requests on the same sheet row
+const bookingRowLocks = new Map<string, Promise<void>>();
+
+async function acquireRowLock<T>(lockKey: string, task: () => Promise<T>): Promise<T> {
+  const currentLock = bookingRowLocks.get(lockKey) || Promise.resolve();
+  let releaseLock: () => void = () => {};
+  const nextLock = new Promise<void>((resolve) => {
+    releaseLock = resolve;
+  });
+  bookingRowLocks.set(lockKey, nextLock);
+
+  try {
+    await currentLock;
+    return await task();
+  } finally {
+    releaseLock();
+    if (bookingRowLocks.get(lockKey) === nextLock) {
+      bookingRowLocks.delete(lockKey);
+    }
+  }
+}
+
 // Public endpoint: Submit booking without student login
 app.post('/api/public/book', async (req: Request, res: Response) => {
   try {
@@ -603,166 +625,171 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
     let colStart = targetRoom === 2 ? 'I' : 'E';
     let colEnd = targetRoom === 2 ? 'L' : 'H';
 
-    // Check whether the target room columns already have content
-    const checkRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
-    const checkRes = await fetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${checkRange}`,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
+    // Concurrency Protection: Wrap check-and-write inside row-level mutex lock
+    const lockKey = `${targetSheetId}_${targetSheetName}_row${rowNumber}`;
 
-    if (checkRes.ok) {
-      const checkData = await checkRes.json();
-      const rowValues = (checkData.values?.[0] || []).map((v: unknown) =>
-        v !== undefined && v !== null ? v.toString().trim() : ''
+    await acquireRowLock(lockKey, async () => {
+      // Check whether the target room columns already have content
+      const checkRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
+      const checkRes = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${checkRange}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
       );
-      const [exKelas, exNama, exTema, exId] = rowValues;
-      const hasContent = Boolean(exKelas || exNama || exTema || exId);
 
-      if (hasContent) {
-        // If user specifically requested Room 1 and allowFallback is true, try Room 2 if free
-        if (targetRoom === 1 && allowFallback !== false) {
-          const r2CheckRange = encodeURIComponent(`'${targetSheetName}'!I${rowNumber}:L${rowNumber}`);
-          const r2Res = await fetch(
-            `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${r2CheckRange}`,
-            { headers: { Authorization: `Bearer ${token}` } }
-          );
-          if (r2Res.ok) {
-            const r2Data = await r2Res.json();
-            const r2Values = (r2Data.values?.[0] || []).map((v: unknown) =>
-              v !== undefined && v !== null ? v.toString().trim() : ''
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        const rowValues = (checkData.values?.[0] || []).map((v: unknown) =>
+          v !== undefined && v !== null ? v.toString().trim() : ''
+        );
+        const [exKelas, exNama, exTema, exId] = rowValues;
+        const hasContent = Boolean(exKelas || exNama || exTema || exId);
+
+        if (hasContent) {
+          // If user specifically requested Room 1 and allowFallback is true, try Room 2 if free
+          if (targetRoom === 1 && allowFallback !== false) {
+            const r2CheckRange = encodeURIComponent(`'${targetSheetName}'!I${rowNumber}:L${rowNumber}`);
+            const r2Res = await fetch(
+              `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${r2CheckRange}`,
+              { headers: { Authorization: `Bearer ${token}` } }
             );
-            if (!r2Values.some(Boolean)) {
-              // Auto-fallback to Room 2
-              targetRoom = 2;
-              colStart = 'I';
-              colEnd = 'L';
-            } else {
+            if (r2Res.ok) {
+              const r2Data = await r2Res.json();
+              const r2Values = (r2Data.values?.[0] || []).map((v: unknown) =>
+                v !== undefined && v !== null ? v.toString().trim() : ''
+              );
+              if (!r2Values.some(Boolean)) {
+                // Auto-fallback to Room 2
+                targetRoom = 2;
+                colStart = 'I';
+                colEnd = 'L';
+              } else {
+                res.status(409).json({
+                  error: `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan untuk mencegah penimpaan data.`,
+                  alreadyOccupied: true,
+                });
+                return;
+              }
+            }
+          } else {
+            res.status(409).json({
+              error: `Ruangan ${targetRoom === 2 ? 'Room 2' : 'Room 1'} pada baris ${rowNumber} sudah terisi (${exNama || 'Kelompok lain'}). Dilarang menimpa data yang sudah terisi.`,
+              alreadyOccupied: true,
+            });
+            return;
+          }
+        }
+      }
+
+      // Check if ID_Kelompok already exists in another row in Google Sheet across Room 1 (H) and Room 2 (L)
+      if (idKelompok && idKelompok.toString().trim()) {
+        const targetId = idKelompok.toString().trim().toLowerCase();
+        const allIdRange = encodeURIComponent(`'${targetSheetName}'!H54:L600`);
+        const allIdRes = await fetch(
+          `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${allIdRange}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (allIdRes.ok) {
+          const idData = await allIdRes.json();
+          const rows = idData.values || [];
+          for (let idx = 0; idx < rows.length; idx++) {
+            const actualRow = 54 + idx;
+            const r1IdVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase(); // Col H
+            const r2IdVal = (rows[idx]?.[4] || '').toString().trim().toLowerCase(); // Col L (offset 4 from H)
+            if ((r1IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 1)) ||
+                (r2IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 2))) {
               res.status(409).json({
-                error: `Kedua ruangan (Room 1 & Room 2) pada baris ${rowNumber} sudah terisi di spreadsheet. Penulisan dibatalkan untuk mencegah penimpaan data.`,
-                alreadyOccupied: true,
+                error: `ID Kelompok "${idKelompok.toString().trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
+                duplicateId: true,
               });
               return;
             }
           }
-        } else {
-          res.status(409).json({
-            error: `Ruangan ${targetRoom === 2 ? 'Room 2' : 'Room 1'} pada baris ${rowNumber} sudah terisi (${exNama || 'Kelompok lain'}). Dilarang menimpa data yang sudah terisi.`,
-            alreadyOccupied: true,
+        }
+      }
+
+      // Write Columns for target room (Room 1: E-H, Room 2: I-L)
+      const values = [
+        [
+          (kelasTeori || '').toString().trim(),
+          (namaKelompok || '').toString().trim(),
+          (tema || '').toString().trim(),
+          (idKelompok || '').toString().trim(),
+        ],
+      ];
+
+      const updateRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${updateRange}?valueInputOption=USER_ENTERED`;
+
+      const writeRes = await fetch(updateUrl, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ values }),
+      });
+
+      if (!writeRes.ok) {
+        const err = await writeRes.json().catch(() => ({}));
+        const rawMsg = err.error?.message || 'Gagal menyimpan booking ke spreadsheet';
+
+        // If Google Sheets rejects due to protected cells/ranges, attempt fallback using active owner token from Firestore
+        if (rawMsg.toLowerCase().includes('protected cell') || rawMsg.toLowerCase().includes('permission')) {
+          let fallbackToken: string | null = null;
+          if (targetSheetId) {
+            try {
+              const snap = await fetch(
+                `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/sessions/${targetSheetId}`
+              );
+              if (snap.ok) {
+                const data = await snap.json();
+                fallbackToken = data.fields?.accessToken?.stringValue || null;
+              }
+            } catch {}
+          }
+
+          if (fallbackToken && fallbackToken !== token) {
+            const fallbackRes = await fetch(updateUrl, {
+              method: 'PUT',
+              headers: {
+                Authorization: `Bearer ${fallbackToken}`,
+                'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({ values }),
+            });
+
+            if (fallbackRes.ok) {
+              res.json({
+                success: true,
+                rowNumber,
+                room: targetRoom,
+                message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom}, via sesi owner)`,
+              });
+              return;
+            }
+          }
+
+          res.status(400).json({
+            error: `Google Sheets menolak penulisan karena sel/sheet dilindungi (Protected Range). Pastikan kolom E:L tidak dikunci atau berikan izin edit ke Service Account robot. (${rawMsg})`,
+            isProtectedCell: true,
           });
           return;
         }
-      }
-    }
 
-    // Check if ID_Kelompok already exists in another row in Google Sheet across Room 1 (H) and Room 2 (L)
-    if (idKelompok && idKelompok.toString().trim()) {
-      const targetId = idKelompok.toString().trim().toLowerCase();
-      const allIdRange = encodeURIComponent(`'${targetSheetName}'!H54:L600`);
-      const allIdRes = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${allIdRange}`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-      if (allIdRes.ok) {
-        const idData = await allIdRes.json();
-        const rows = idData.values || [];
-        for (let idx = 0; idx < rows.length; idx++) {
-          const actualRow = 54 + idx;
-          const r1IdVal = (rows[idx]?.[0] || '').toString().trim().toLowerCase(); // Col H
-          const r2IdVal = (rows[idx]?.[4] || '').toString().trim().toLowerCase(); // Col L (offset 4 from H)
-          if ((r1IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 1)) ||
-              (r2IdVal === targetId && (actualRow !== rowNumber || targetRoom !== 2))) {
-            res.status(409).json({
-              error: `ID Kelompok "${idKelompok.toString().trim()}" sudah terdaftar di baris ${actualRow}. Setiap ID Kelompok hanya boleh mendaftar satu kali.`,
-              duplicateId: true,
-            });
-            return;
-          }
-        }
-      }
-    }
-
-    // Write Columns for target room (Room 1: E-H, Room 2: I-L)
-    const values = [
-      [
-        (kelasTeori || '').toString().trim(),
-        (namaKelompok || '').toString().trim(),
-        (tema || '').toString().trim(),
-        (idKelompok || '').toString().trim(),
-      ],
-    ];
-
-    const updateRange = encodeURIComponent(`'${targetSheetName}'!${colStart}${rowNumber}:${colEnd}${rowNumber}`);
-    const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${targetSheetId}/values/${updateRange}?valueInputOption=USER_ENTERED`;
-
-    const writeRes = await fetch(updateUrl, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ values }),
-    });
-
-    if (!writeRes.ok) {
-      const err = await writeRes.json().catch(() => ({}));
-      const rawMsg = err.error?.message || 'Gagal menyimpan booking ke spreadsheet';
-
-      // If Google Sheets rejects due to protected cells/ranges, attempt fallback using active owner token from Firestore
-      if (rawMsg.toLowerCase().includes('protected cell') || rawMsg.toLowerCase().includes('permission')) {
-        let fallbackToken: string | null = null;
-        if (targetSheetId) {
-          try {
-            const snap = await fetch(
-              `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/sessions/${targetSheetId}`
-            );
-            if (snap.ok) {
-              const data = await snap.json();
-              fallbackToken = data.fields?.accessToken?.stringValue || null;
-            }
-          } catch {}
-        }
-
-        if (fallbackToken && fallbackToken !== token) {
-          const fallbackRes = await fetch(updateUrl, {
-            method: 'PUT',
-            headers: {
-              Authorization: `Bearer ${fallbackToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ values }),
-          });
-
-          if (fallbackRes.ok) {
-            res.json({
-              success: true,
-              rowNumber,
-              room: targetRoom,
-              message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom}, via sesi owner)`,
-            });
-            return;
-          }
-        }
-
-        res.status(400).json({
-          error: `Google Sheets menolak penulisan karena sel/sheet dilindungi (Protected Range). Pastikan kolom E:L tidak dikunci atau berikan izin edit ke Service Account robot. (${rawMsg})`,
-          isProtectedCell: true,
+        res.status(writeRes.status).json({
+          error: rawMsg,
         });
         return;
       }
 
-      res.status(writeRes.status).json({
-        error: rawMsg,
+      res.json({
+        success: true,
+        rowNumber,
+        room: targetRoom,
+        message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom})`,
       });
-      return;
-    }
-
-    res.json({
-      success: true,
-      rowNumber,
-      room: targetRoom,
-      message: `Booking presentasi berhasil disimpan ke Google Sheet (Room ${targetRoom})`,
     });
   } catch (error: unknown) {
     console.error('Error in public booking:', error);

@@ -18,6 +18,7 @@ import {
   query,
   orderBy,
   onSnapshot,
+  runTransaction,
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 import { CustomForm } from './sheets';
@@ -449,7 +450,24 @@ export const createPendingBookingHold = async (
       bookedAt: Date.now(),
     };
 
-    await setDoc(bookingRef, data, { merge: true });
+    // 3. ATOMIC TRANSACTION: Prevent race condition if two users click hold at the exact same millisecond
+    await runTransaction(db, async (transaction) => {
+      const currentDoc = await transaction.get(bookingRef);
+      if (currentDoc.exists()) {
+        const existingData = currentDoc.data() as BookingRecord;
+        // If document exists and is currently active (confirmed or pending and not expired)
+        if (existingData.status === 'confirmed') {
+          throw new Error(`Ruangan ${targetRoom === 2 ? 'Room 2' : 'Room 1'} pada sesi ini baru saja dikonfirmasi oleh kelompok lain.`);
+        }
+        if (existingData.status === 'pending' && existingData.expiresAt && Date.now() < existingData.expiresAt) {
+          // If held by another user/token
+          if (existingData.confirmToken !== confirmToken) {
+            throw new Error(`Ruangan ${targetRoom === 2 ? 'Room 2' : 'Room 1'} pada sesi ini sedang di-hold oleh kelompok lain.`);
+          }
+        }
+      }
+      transaction.set(bookingRef, data, { merge: true });
+    });
 
     return {
       success: true,
@@ -483,58 +501,60 @@ export const verifyAndConfirmBookingInFirestore = async (
 }> => {
   try {
     const bookingRef = doc(db, 'bookings', bookingId);
-    const snap = await getDoc(bookingRef);
+    // Atomic Transaction for confirmation: Ensure only 1 confirmer can flip status to confirmed
+    return await runTransaction(db, async (transaction) => {
+      const snap = await transaction.get(bookingRef);
 
-    if (!snap.exists()) {
-      return {
-        success: false,
-        error: 'Data booking tidak ditemukan atau telah dihapus.',
+      if (!snap.exists()) {
+        return {
+          success: false,
+          error: 'Data booking tidak ditemukan atau telah dihapus.',
+        };
+      }
+
+      const booking = snap.data() as BookingRecord;
+
+      // Check if already confirmed
+      if (booking.status === 'confirmed') {
+        return {
+          success: true,
+          booking,
+          alreadyConfirmed: true,
+        };
+      }
+
+      // Check token matching
+      if (!booking.confirmToken || booking.confirmToken !== token) {
+        return {
+          success: false,
+          error: 'Token verifikasi email tidak valid atau sudah tidak berlaku.',
+        };
+      }
+
+      // Check 15-minute expiration
+      if (booking.expiresAt && Date.now() > booking.expiresAt) {
+        transaction.delete(bookingRef);
+        return {
+          success: false,
+          expired: true,
+          error: 'Masa berlaku konfirmasi telah berakhir (lebih dari 15 menit). Slot telah dilepas kembali agar dapat dipilih mahasiswa lain.',
+        };
+      }
+
+      // Confirm booking - preserve confirmToken so future visits with the same email link can be recognized
+      const confirmedData: Partial<BookingRecord> = {
+        status: 'confirmed',
+        confirmedAt: Date.now(),
       };
-    }
 
-    const booking = snap.data() as BookingRecord;
+      transaction.set(bookingRef, confirmedData, { merge: true });
 
-    // Check if already confirmed
-    if (booking.status === 'confirmed') {
       return {
         success: true,
-        booking,
-        alreadyConfirmed: true,
+        booking: { ...booking, ...confirmedData },
+        alreadyConfirmed: false,
       };
-    }
-
-    // Check token matching
-    if (!booking.confirmToken || booking.confirmToken !== token) {
-      return {
-        success: false,
-        error: 'Token verifikasi email tidak valid atau sudah tidak berlaku.',
-      };
-    }
-
-    // Check 15-minute expiration
-    if (booking.expiresAt && Date.now() > booking.expiresAt) {
-      // Mark as cancelled or delete
-      await deleteDoc(bookingRef).catch(() => {});
-      return {
-        success: false,
-        expired: true,
-        error: 'Masa berlaku konfirmasi telah berakhir (lebih dari 15 menit). Slot telah dilepas kembali agar dapat dipilih mahasiswa lain.',
-      };
-    }
-
-    // Confirm booking - preserve confirmToken so future visits with the same email link can be recognized
-    const confirmedData: Partial<BookingRecord> = {
-      status: 'confirmed',
-      confirmedAt: Date.now(),
-    };
-
-    await setDoc(bookingRef, confirmedData, { merge: true });
-
-    return {
-      success: true,
-      booking: { ...booking, ...confirmedData },
-      alreadyConfirmed: false,
-    };
+    });
   } catch (err) {
     console.error('Error verifying booking token in Firestore:', err);
     return {
