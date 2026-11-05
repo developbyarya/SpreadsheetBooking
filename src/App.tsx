@@ -1554,7 +1554,7 @@ export default function App() {
   const currentTabName = activeFormItem?.sheetName || config?.activeSheetName;
 
   // PUBLIC VISITOR VIEW (NO LOGIN REQUIRED)
-  if (!user && !isAdminLoginModalOpen) {
+  if (!user) {
     return (
       <div className="min-h-screen bg-slate-50 text-slate-900 font-sans selection:bg-emerald-100 selection:text-emerald-900">
         {isRefreshing && slots.length === 0 ? (
