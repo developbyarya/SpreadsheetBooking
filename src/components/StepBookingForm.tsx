@@ -298,7 +298,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       setCurrentStep(5);
     } else if (currentStep === 5) {
       if (!namaKelompok.trim()) {
-        setErrorMsg('Nama Kelompok / Anggota wajib diisi.');
+        setErrorMsg('Nama Kelompok wajib diisi.');
         return;
       }
       setCurrentStep(6);
@@ -1239,10 +1239,10 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   Field 4 / 5
                 </span>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
-                  Nama Kelompok / Anggota
+                  Nama Kelompok
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-500">
-                  Tuliskan nama kelompok beserta anggota (misal: Kelompok 3 - Arya, Budi, Siti)
+                  Tuliskan nama kelompok Anda (misal: Kelompok 3)
                 </p>
               </div>
 
@@ -1251,7 +1251,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   ref={inputRef}
                   type="text"
                   required
-                  placeholder="Ketik Nama Kelompok / Anggota..."
+                  placeholder="Ketik Nama Kelompok..."
                   value={namaKelompok}
                   onChange={(e) => setNamaKelompok(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleNext()}

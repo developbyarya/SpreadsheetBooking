@@ -21,6 +21,7 @@ import {
   fetchFormsFromFirestore,
   fetchFormByIdFromFirestore,
   deleteFormFromFirestore,
+  subscribeToFormFromFirestore,
   saveSessionTokenToFirestore,
   fetchSessionTokenFromFirestore,
   saveBookingToFirestore,
@@ -621,14 +622,20 @@ export default function App() {
           }),
         }).catch(() => {});
 
-        // Ensure default form exists in Firestore & backend
+        // Ensure default form exists in Firestore & backend while preserving existing settings
+        const existingForm = await fetchFormByIdFromFirestore('default').catch(() => null);
         const defaultForm: CustomForm = {
           id: 'default',
-          title: sheetConfig.title || 'Booking Presentasi Data Science',
+          title: existingForm?.title || sheetConfig.title || 'Booking Presentasi Data Science',
+          description: existingForm?.description || '',
           sheetId: sheetConfig.id,
           sheetName: sheetConfig.activeSheetName || 'Sheet1',
           startRow: sheetConfig.startRow || 54,
-          createdAt: Date.now(),
+          createdAt: existingForm?.createdAt || Date.now(),
+          closedAt: existingForm?.closedAt ?? null,
+          openAt: existingForm?.openAt ?? null,
+          isClosed: Boolean(existingForm?.isClosed),
+          closedMessage: existingForm?.closedMessage || '',
         };
 
         await saveFormToFirestore(defaultForm, user?.uid).catch(() => {});
@@ -750,6 +757,21 @@ export default function App() {
             } else {
               setSlots(directSlots);
             }
+
+            // Sync latest form status (isClosed, closedAt, openAt, closedMessage) from backend/Firestore
+            try {
+              const formsRes = await fetch('/api/forms');
+              if (formsRes.ok) {
+                const formsData = await formsRes.json();
+                const matchedForm =
+                  formsData.forms?.find((f: CustomForm) => f.id === (formSlug || activeForm?.id || 'default')) ||
+                  formsData.forms?.[0];
+                if (matchedForm) {
+                  setActiveFormItem((prev) => ({ ...(prev || {}), ...matchedForm }));
+                }
+              }
+            } catch {}
+
             return;
           } catch (directErr) {
             console.warn('Direct fetch with token failed, falling back to /api/public/slots:', directErr);
@@ -780,8 +802,12 @@ export default function App() {
         } else {
           setSlots(rawSlots);
         }
-        if (data.form && !activeForm) {
-          setActiveFormItem(data.form);
+        if (data.form) {
+          setActiveFormItem((prev) => ({
+            ...(prev || {}),
+            ...data.form,
+            isClosed: typeof data.isClosed === 'boolean' ? data.isClosed : data.form.isClosed,
+          }));
           setConfig((prev) => ({
             id: data.form.sheetId || prev?.id || '',
             url: prev?.url || `https://docs.google.com/spreadsheets/d/${data.form.sheetId}/edit`,
@@ -793,8 +819,8 @@ export default function App() {
         }
       } else {
         const err = await res.json().catch(() => ({}));
-        if (err.form && !activeForm) {
-          setActiveFormItem(err.form);
+        if (err.form) {
+          setActiveFormItem((prev) => ({ ...(prev || {}), ...err.form }));
         }
         setSheetError(err.error || 'Jadwal presentasi belum dapat dimuat.');
       }
@@ -996,6 +1022,23 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // Real-time listener for the active form from Firestore to react instantly to manual close / deadlines
+  useEffect(() => {
+    const targetFormId = activeFormItem?.id || 'default';
+    const unsubscribe = subscribeToFormFromFirestore(targetFormId, (updatedForm) => {
+      if (updatedForm) {
+        setActiveFormItem((prev) => {
+          if (!prev) return updatedForm;
+          return {
+            ...prev,
+            ...updatedForm,
+          };
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, [activeFormItem?.id]);
 
   // Handle email confirmation link (?action=confirm&bookingId=...&token=...)
   useEffect(() => {
@@ -1306,18 +1349,22 @@ export default function App() {
     slot: PresentationSlot,
     payload: PresentationBookingPayload
   ): Promise<void> => {
-    // Check if form is currently closed / past deadline
-    const formClosedCheck = isFormClosed(activeFormItem);
+    const params = new URLSearchParams(window.location.search);
+    const formSlug = params.get('form') || activeFormItem?.id || 'default';
+
+    // Re-verify latest form status directly from Firestore to prevent booking on closed forms
+    const latestForm = await fetchFormByIdFromFirestore(formSlug).catch(() => null);
+    const formToCheck = latestForm || activeFormItem;
+    const formClosedCheck = isFormClosed(formToCheck);
     if (formClosedCheck.isClosed) {
+      if (formToCheck) setActiveFormItem((prev) => ({ ...(prev || {}), ...formToCheck }));
       throw new Error(
-        activeFormItem?.closedMessage ||
+        formToCheck?.closedMessage ||
         formClosedCheck.reason ||
         'Pendaftaran jadwal presentasi telah ditutup.'
       );
     }
 
-    const params = new URLSearchParams(window.location.search);
-    const formSlug = params.get('form') || activeFormItem?.id || undefined;
     const effectiveSheetId = activeFormItem?.sheetId || config?.id || '';
     const effectiveSheetName = activeFormItem?.sheetName || config?.activeSheetName || 'Sheet1';
     const targetRoom = payload.room || slot.availableRoom || 1;

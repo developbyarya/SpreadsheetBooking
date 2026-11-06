@@ -137,10 +137,19 @@ export const logout = async () => {
  */
 export const saveFormToFirestore = async (form: CustomForm, ownerId?: string): Promise<void> => {
   const formRef = doc(db, 'forms', form.id);
-  const data = {
-    ...form,
+  const data: Record<string, any> = {
+    id: form.id,
+    title: form.title || 'Jadwal Presentasi',
+    description: form.description || '',
+    sheetId: form.sheetId,
+    sheetName: form.sheetName || 'Sheet1',
+    startRow: Number(form.startRow) || 54,
     createdAt: form.createdAt || Date.now(),
     updatedAt: Date.now(),
+    isClosed: Boolean(form.isClosed),
+    closedAt: typeof form.closedAt === 'number' ? form.closedAt : null,
+    openAt: typeof form.openAt === 'number' ? form.openAt : null,
+    closedMessage: form.closedMessage || '',
     ...(ownerId ? { ownerId } : {}),
   };
   await setDoc(formRef, data, { merge: true });
@@ -164,9 +173,9 @@ export const fetchFormsFromFirestore = async (): Promise<CustomForm[]> => {
         sheetId: data.sheetId || '',
         sheetName: data.sheetName || 'Sheet1',
         startRow: Number(data.startRow) || 54,
-        createdAt: data.createdAt || Date.now(),
-        closedAt: data.closedAt || null,
-        openAt: data.openAt || null,
+        createdAt: Number(data.createdAt) || Date.now(),
+        closedAt: typeof data.closedAt === 'number' ? data.closedAt : data.closedAt ? Number(data.closedAt) : null,
+        openAt: typeof data.openAt === 'number' ? data.openAt : data.openAt ? Number(data.openAt) : null,
         isClosed: Boolean(data.isClosed),
         closedMessage: data.closedMessage || '',
       });
@@ -187,9 +196,9 @@ export const fetchFormsFromFirestore = async (): Promise<CustomForm[]> => {
           sheetId: data.sheetId || '',
           sheetName: data.sheetName || 'Sheet1',
           startRow: Number(data.startRow) || 54,
-          createdAt: data.createdAt || Date.now(),
-          closedAt: data.closedAt || null,
-          openAt: data.openAt || null,
+          createdAt: Number(data.createdAt) || Date.now(),
+          closedAt: typeof data.closedAt === 'number' ? data.closedAt : data.closedAt ? Number(data.closedAt) : null,
+          openAt: typeof data.openAt === 'number' ? data.openAt : data.openAt ? Number(data.openAt) : null,
           isClosed: Boolean(data.isClosed),
           closedMessage: data.closedMessage || '',
         });
@@ -218,9 +227,9 @@ export const fetchFormByIdFromFirestore = async (formId: string): Promise<Custom
         sheetId: data.sheetId || '',
         sheetName: data.sheetName || 'Sheet1',
         startRow: Number(data.startRow) || 54,
-        createdAt: data.createdAt || Date.now(),
-        closedAt: data.closedAt || null,
-        openAt: data.openAt || null,
+        createdAt: Number(data.createdAt) || Date.now(),
+        closedAt: typeof data.closedAt === 'number' ? data.closedAt : data.closedAt ? Number(data.closedAt) : null,
+        openAt: typeof data.openAt === 'number' ? data.openAt : data.openAt ? Number(data.openAt) : null,
         isClosed: Boolean(data.isClosed),
         closedMessage: data.closedMessage || '',
       };
@@ -229,6 +238,47 @@ export const fetchFormByIdFromFirestore = async (formId: string): Promise<Custom
   } catch (err) {
     console.error(`Error fetching form ${formId} from Firestore:`, err);
     return null;
+  }
+};
+
+/**
+ * Real-time listener for a form from Firestore
+ */
+export const subscribeToFormFromFirestore = (
+  formId: string,
+  onUpdate: (form: CustomForm | null) => void
+) => {
+  try {
+    const formRef = doc(db, 'forms', formId);
+    return onSnapshot(
+      formRef,
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          onUpdate({
+            id: docSnap.id,
+            title: data.title || 'Jadwal Presentasi',
+            description: data.description || '',
+            sheetId: data.sheetId || '',
+            sheetName: data.sheetName || 'Sheet1',
+            startRow: Number(data.startRow) || 54,
+            createdAt: Number(data.createdAt) || Date.now(),
+            closedAt: typeof data.closedAt === 'number' ? data.closedAt : data.closedAt ? Number(data.closedAt) : null,
+            openAt: typeof data.openAt === 'number' ? data.openAt : data.openAt ? Number(data.openAt) : null,
+            isClosed: Boolean(data.isClosed),
+            closedMessage: data.closedMessage || '',
+          });
+        } else {
+          onUpdate(null);
+        }
+      },
+      (err) => {
+        console.warn(`Firestore subscription to form ${formId} note:`, err);
+      }
+    );
+  } catch (err) {
+    console.warn('Failed to setup Firestore onSnapshot:', err);
+    return () => {};
   }
 };
 

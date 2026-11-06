@@ -597,12 +597,12 @@ export const BookingView: React.FC<BookingViewProps> = ({
                           <div className="space-y-1">
                             <label className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                               <Users className="w-3.5 h-3.5 text-slate-400" />
-                              Nama Kelompok / Anggota *
+                              Nama Kelompok *
                             </label>
                             <input
                               type="text"
                               required
-                              placeholder="Contoh: Kelompok 1 (Arya, Budi, Siti)"
+                              placeholder="Contoh: Kelompok 1"
                               value={namaKelompok}
                               onChange={(e) => setNamaKelompok(e.target.value)}
                               className="w-full px-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"

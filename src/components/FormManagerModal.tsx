@@ -164,14 +164,14 @@ export const FormManagerModal: React.FC<FormManagerModalProps> = ({
     const formToSave: CustomForm = {
       id: editingFormId || slug,
       title: formTitle.trim(),
-      description: formDesc.trim() || undefined,
+      description: formDesc.trim(),
       sheetId,
       sheetName: selectedSheetName.trim() || 'Sheet1',
       startRow: Number(startRow) || 54,
       createdAt: existingForm ? existingForm.createdAt : Date.now(),
       closedAt,
       isClosed: isClosedManually,
-      closedMessage: closedMessage.trim() || undefined,
+      closedMessage: closedMessage.trim(),
     };
 
     setIsSubmitting(true);

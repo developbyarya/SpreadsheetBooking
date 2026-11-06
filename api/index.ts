@@ -272,9 +272,7 @@ app.get('/api/sheet-tabs', async (req: Request, res: Response) => {
 
 // Get all registered forms
 app.get('/api/forms', async (_req: Request, res: Response) => {
-  if (formsMap.size === 0) {
-    await syncFormsFromFirestore();
-  }
+  await syncFormsFromFirestore();
   const list = Array.from(formsMap.values()).sort((a, b) => b.createdAt - a.createdAt);
   res.json({ forms: list });
 });
@@ -327,10 +325,8 @@ app.get('/api/public/slots', async (req: Request, res: Response) => {
     const queryStartRow = Number(req.query.startRow) || 54;
     const queryTitle = (req.query.title as string) || 'Booking Presentasi Data Science';
 
-    // If formsMap is empty (cold start in serverless), sync from Firestore
-    if (formsMap.size === 0) {
-      await syncFormsFromFirestore();
-    }
+    // Sync latest form settings and deadlines from Firestore
+    await syncFormsFromFirestore();
 
     let targetForm: FormItem | undefined;
 
@@ -582,9 +578,12 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
     let targetSheetId = bodySheetId;
     let targetSheetName = bodySheetName;
 
+    // Ensure forms are synced from Firestore before checking closed status
+    await syncFormsFromFirestore();
+
     const formToCheck = (formId && formsMap.has(formId))
       ? formsMap.get(formId)
-      : Array.from(formsMap.values()).find((f) => f.sheetId === bodySheetId);
+      : Array.from(formsMap.values()).find((f) => f.sheetId === bodySheetId) || formsMap.get('default');
 
     if (formToCheck) {
       targetSheetId = formToCheck.sheetId;
