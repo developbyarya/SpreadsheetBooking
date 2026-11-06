@@ -545,6 +545,25 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       return;
     }
 
+    // Backend validation of institutional student email format
+    if (email && !isEmailBypassEnabled()) {
+      const cleanEmail = email.toString().trim().toLowerCase();
+      const match = cleanEmail.match(/^123(\d{2})(\d)(\d{3})@student\.upnyk\.ac\.id$/);
+      if (!match) {
+        res.status(400).json({
+          error: 'Format email harus 123xxxxxx@student.upnyk.ac.id (contoh: 123230089@student.upnyk.ac.id)',
+        });
+        return;
+      }
+      const [, angkatan, , last3] = match;
+      if (angkatan === '00' || last3 === '000' || parseInt(last3, 10) >= 300) {
+        res.status(400).json({
+          error: 'Email NIM tidak valid: digit 4-5 tidak boleh 00, dan 3 digit terakhir harus antara 001-299 (lebih kecil dari 300).',
+        });
+        return;
+      }
+    }
+
     // Security Verification: If confirmation token/bookingId is provided or verification is required, validate Firestore hold
     if (bookingId && confirmToken) {
       try {
@@ -825,6 +844,40 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
         res.status(403).json({
           error: 'Pendaftaran jadwal presentasi belum dibuka.',
           isClosed: true,
+        });
+        return;
+      }
+    }
+
+    // Format validation: UPN Informatika email rules
+    const cleanEmail = email.trim().toLowerCase();
+    const isBypass = isEmailBypassEnabled();
+
+    if (!isBypass) {
+      const match = cleanEmail.match(/^123(\d{2})(\d)(\d{3})@student\.upnyk\.ac\.id$/);
+      if (!match) {
+        res.status(400).json({
+          error: 'Format email tidak valid: harus 123xxxxxx@student.upnyk.ac.id (9 digit NIM UPN Informatika, contoh: 123230089@student.upnyk.ac.id).',
+        });
+        return;
+      }
+      const [, angkatan, , last3] = match;
+      if (angkatan === '00') {
+        res.status(400).json({
+          error: 'Digit ke 4-5 (angkatan) tidak boleh 00 (contoh: 123230089@student.upnyk.ac.id).',
+        });
+        return;
+      }
+      if (last3 === '000') {
+        res.status(400).json({
+          error: '3 digit terakhir nomor urut mahasiswa tidak boleh 000.',
+        });
+        return;
+      }
+      const last3Num = parseInt(last3, 10);
+      if (last3Num >= 300) {
+        res.status(400).json({
+          error: `3 digit terakhir nomor urut (${last3}) harus lebih kecil dari 300 (maksimal 299).`,
         });
         return;
       }

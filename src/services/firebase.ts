@@ -357,19 +357,83 @@ export interface BookingRecord {
   bookedByAdmin?: boolean;
 }
 
+export interface EmailValidationResult {
+  isValid: boolean;
+  error?: string;
+  angkatan?: string;
+  nomorUrut?: number;
+}
+
 /**
- * Validate UPN Informatika student email format:
- * Pattern: 123xxxxxx@student.upnyk.ac.id
- * 123 = Jurusan Informatika
- * xxxxxx = 6 digit NIM (Angkatan & Nomor Urut Mahasiswa)
+ * Validate UPN Informatika student email format and rules:
+ * Pattern: 123xxxxxx@student.upnyk.ac.id (9-digit NIM)
+ * - 123 = Jurusan Informatika
+ * - Digit 4-5 = Angkatan (tidak boleh '00')
+ * - Digit 6 = Kode jenjang (1 digit angka)
+ * - 3 Digit Terakhir = Nomor urut (tidak boleh '000' dan harus lebih kecil dari 300, yaitu 001 - 299)
+ * Contoh valid: 123230089@student.upnyk.ac.id
+ */
+export const validateUpnInformatikaEmail = (
+  email: string,
+  bypassMode = false
+): EmailValidationResult => {
+  const clean = (email || '').trim().toLowerCase();
+  if (!clean) {
+    return { isValid: false, error: 'Email mahasiswa wajib diisi.' };
+  }
+
+  if (bypassMode || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EMAIL_BYPASS === 'true')) {
+    const valid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
+    return {
+      isValid: valid,
+      error: valid ? undefined : 'Format email tidak valid (contoh: user@example.com).',
+    };
+  }
+
+  const match = clean.match(/^123(\d{2})(\d)(\d{3})@student\.upnyk\.ac\.id$/);
+  if (!match) {
+    return {
+      isValid: false,
+      error: 'Format email harus 123xxxxxx@student.upnyk.ac.id (9 digit NIM Informatika, contoh: 123230089@student.upnyk.ac.id).',
+    };
+  }
+
+  const [, angkatan, , last3] = match;
+
+  if (angkatan === '00') {
+    return {
+      isValid: false,
+      error: 'Digit ke 4-5 (angkatan) tidak boleh 00 (contoh yang benar: 123230089@student.upnyk.ac.id).',
+    };
+  }
+
+  if (last3 === '000') {
+    return {
+      isValid: false,
+      error: '3 digit terakhir nomor urut mahasiswa tidak boleh 000.',
+    };
+  }
+
+  const last3Num = parseInt(last3, 10);
+  if (last3Num >= 300) {
+    return {
+      isValid: false,
+      error: `3 digit terakhir nomor urut (${last3}) harus lebih kecil dari 300 (maksimal 299).`,
+    };
+  }
+
+  return {
+    isValid: true,
+    angkatan,
+    nomorUrut: last3Num,
+  };
+};
+
+/**
+ * Validate UPN Informatika student email format boolean helper
  */
 export const isValidUpnInformatikaEmail = (email: string, bypassMode = false): boolean => {
-  const clean = (email || '').trim().toLowerCase();
-  if (bypassMode || (typeof import.meta !== 'undefined' && import.meta.env?.VITE_EMAIL_BYPASS === 'true')) {
-    // In bypass mode, accept any valid email address format
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean);
-  }
-  return /^123\d{6}@student\.upnyk\.ac\.id$/i.test(clean);
+  return validateUpnInformatikaEmail(email, bypassMode).isValid;
 };
 
 export const getBookingDocId = (sheetId: string, sheetName: string, rowNumber: number, room: 1 | 2 = 1): string => {

@@ -26,6 +26,7 @@ import {
 import { PresentationSlot, PresentationBookingPayload } from '../services/sheets';
 import {
   isValidUpnInformatikaEmail,
+  validateUpnInformatikaEmail,
   createPendingBookingHold,
   cancelBookingInFirestore,
   subscribeToBookingStatus,
@@ -254,12 +255,9 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
         setErrorMsg('Email mahasiswa wajib diisi.');
         return;
       }
-      if (!isValidUpnInformatikaEmail(cleanEmail, isBypass)) {
-        setErrorMsg(
-          isBypass
-            ? 'Format email tidak valid (contoh: user@example.com)'
-            : 'Email harus merupakan email institusi Informatika UPN Veteran Yogyakarta: 123xxxxxx@student.upnyk.ac.id'
-        );
+      const valResult = validateUpnInformatikaEmail(cleanEmail, isBypass);
+      if (!valResult.isValid) {
+        setErrorMsg(valResult.error || 'Format email mahasiswa tidak valid.');
         return;
       }
       // Rule 1: Email hanya boleh digunakan sekali
@@ -324,12 +322,9 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
     if (!selectedSlot) return;
 
     const cleanEmail = studentEmail.trim().toLowerCase();
-    if (!isValidUpnInformatikaEmail(cleanEmail, isBypass)) {
-      setErrorMsg(
-        isBypass
-          ? 'Format email tidak valid.'
-          : 'Format email salah! Gunakan email institusi UPN Informatika: 123xxxxxx@student.upnyk.ac.id'
-      );
+    const valResult = validateUpnInformatikaEmail(cleanEmail, isBypass);
+    if (!valResult.isValid) {
+      setErrorMsg(valResult.error || 'Format email mahasiswa tidak valid.');
       setCurrentStep(2);
       return;
     }
@@ -1052,7 +1047,7 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                     ref={inputRef}
                     type="email"
                     required
-                    placeholder="123xxxxxx@student.upnyk.ac.id (contoh: 123230001@student.upnyk.ac.id)"
+                    placeholder="123xxxxxx@student.upnyk.ac.id (contoh: 123230089@student.upnyk.ac.id)"
                     value={studentEmail}
                     onChange={(e) => {
                       setStudentEmail(e.target.value);
@@ -1063,13 +1058,49 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
                   />
                 </div>
 
-                <div className="p-3 bg-emerald-50/70 border border-emerald-200 rounded-xl text-xs text-emerald-800 space-y-1">
-                  <p className="font-semibold">Format Alamat Email Mahasiswa:</p>
-                  <p>
-                    • <strong>123</strong> = Program Studi Informatika <br />
-                    • <strong>xxxxxx</strong> = 6 digit NIM (Angkatan & Nomor Urut Mahasiswa) <br />
-                    • Domain: <strong>@student.upnyk.ac.id</strong>
+                {/* Live validation confirmation feedback */}
+                {studentEmail.trim() && !isBypass && (() => {
+                  const val = validateUpnInformatikaEmail(studentEmail.trim(), false);
+                  if (val.isValid) {
+                    return (
+                      <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-xs text-emerald-900 flex items-center gap-2 animate-in fade-in">
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                        <span>
+                          <strong>NIM Terkonfirmasi:</strong> Angkatan '20{val.angkatan}, No. Urut #{val.nomorUrut} ({studentEmail.trim()})
+                        </span>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-800 flex items-start gap-2 animate-in fade-in">
+                      <XCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                      <span>{val.error}</span>
+                    </div>
+                  );
+                })()}
+
+                <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-700 space-y-2">
+                  <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                    Ketentuan Format Email Mahasiswa (NIM):
                   </p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="font-semibold text-slate-900">123 (Digit 1-3):</span> Prodi Informatika
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="font-semibold text-slate-900">Digit 4-5:</span> Angkatan (<span className="text-rose-600 font-bold">tidak boleh 00</span>, misal: 21, 22, 23, 24)
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="font-semibold text-slate-900">Digit 6:</span> Jenjang program studi (1 digit)
+                    </div>
+                    <div className="bg-white p-2 rounded-lg border border-slate-200/80">
+                      <span className="font-semibold text-slate-900">3 Digit Terakhir:</span> No. Urut (<span className="text-rose-600 font-bold">001 - 299</span>, tidak boleh 000 & &lt; 300)
+                    </div>
+                  </div>
+                  <div className="pt-1 border-t border-slate-200/60 text-[11px] text-slate-600">
+                    💡 Contoh valid: <strong className="font-mono text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200">123230089@student.upnyk.ac.id</strong>
+                  </div>
                 </div>
               </div>
 
