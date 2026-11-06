@@ -30,6 +30,9 @@ let cachedServiceAccountToken: { token: string; expiresAt: number } | null = nul
 
 const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || 'gen-lang-client-0811762236';
 
+// Valid official lecture classes
+const ALLOWED_KELAS_TEORI = ['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'];
+
 /**
  * Check if email verification bypass / test mode is enabled
  */
@@ -545,6 +548,15 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       return;
     }
 
+    // Backend validation of official Kelas Teori options
+    const cleanKelas = (kelasTeori || '').toString().trim().toUpperCase();
+    if (!cleanKelas || !ALLOWED_KELAS_TEORI.includes(cleanKelas)) {
+      res.status(400).json({
+        error: `Kelas Teori "${kelasTeori}" tidak valid! Pilihan resmi yang diperbolehkan hanya: ${ALLOWED_KELAS_TEORI.join(', ')}.`,
+      });
+      return;
+    }
+
     // Backend validation of institutional student email format
     if (email && !isEmailBypassEnabled()) {
       const cleanEmail = email.toString().trim().toLowerCase();
@@ -564,8 +576,16 @@ app.post('/api/public/book', async (req: Request, res: Response) => {
       }
     }
 
-    // Security Verification: If confirmation token/bookingId is provided or verification is required, validate Firestore hold
-    if (bookingId && confirmToken) {
+    // Security Verification: Require valid booking hold and confirmation token when email verification is active
+    const isBypass = isEmailBypassEnabled();
+    if (!isBypass) {
+      if (!bookingId || !confirmToken) {
+        res.status(401).json({
+          error: 'Akses ditolak: Pendaftaran wajib melalui proses verifikasi email resmi (bookingId & confirmToken diperlukan).',
+        });
+        return;
+      }
+
       try {
         const snap = await fetch(
           `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/(default)/documents/bookings/${encodeURIComponent(bookingId)}`
@@ -847,6 +867,15 @@ app.post('/api/send-confirmation', async (req: Request, res: Response) => {
         });
         return;
       }
+    }
+
+    // Validate Kelas Teori
+    const cleanKelas = (slotDetails.kelasTeori || '').toString().trim().toUpperCase();
+    if (!cleanKelas || !ALLOWED_KELAS_TEORI.includes(cleanKelas)) {
+      res.status(400).json({
+        error: `Kelas Teori "${slotDetails.kelasTeori}" tidak valid! Pilihan resmi yang diperbolehkan: ${ALLOWED_KELAS_TEORI.join(', ')}.`,
+      });
+      return;
     }
 
     // Format validation: UPN Informatika email rules

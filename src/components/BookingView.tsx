@@ -117,6 +117,11 @@ export const BookingView: React.FC<BookingViewProps> = ({
       return;
     }
 
+    if (!kelasTeori.trim() || !['IF-A', 'IF-B', 'IF-C', 'IF-D', 'IF-E'].includes(kelasTeori.trim())) {
+      alert('Kelas Teori tidak valid. Pilih salah satu opsi resmi (IF-A s/d IF-E)!');
+      return;
+    }
+
     const cleanId = idKelompok.trim().toLowerCase();
     const existingSlot = slots.find(
       (s) => s.idKelompok && s.idKelompok.trim().toLowerCase() === cleanId && s.rowNumber !== selectedSlot.rowNumber

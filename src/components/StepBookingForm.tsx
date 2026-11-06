@@ -272,8 +272,8 @@ export const StepBookingForm: React.FC<StepBookingFormProps> = ({
       }
       setCurrentStep(3);
     } else if (currentStep === 3) {
-      if (!kelasTeori.trim()) {
-        setErrorMsg('Kelas Teori wajib diisi.');
+      if (!kelasTeori.trim() || !KELAS_TEORI_OPTIONS.includes(kelasTeori.trim())) {
+        setErrorMsg('Pilih salah satu Kelas Teori resmi yang tersedia (IF-A s/d IF-E).');
         return;
       }
       setCurrentStep(4);
